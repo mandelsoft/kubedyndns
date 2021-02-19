@@ -1,0 +1,21 @@
+#!/bin/bash
+#
+# SPDX-FileCopyrightText: 2019 SAP SE or an SAP affiliate company and Gardener contributors
+#
+# SPDX-License-Identifier: Apache-2.0
+
+set -x
+rm -f $GOPATH/bin/*-gen
+
+PROJECT_ROOT=$(dirname $0)/..
+DIR=$(pwd)
+BASE="$1"
+SPEC="$2"
+
+bash "${PROJECT_ROOT}"/vendor/k8s.io/code-generator/generate-internal-groups.sh \
+  deepcopy,client,informer,lister,defaulter \
+  $BASE/client \
+  $BASE/apis \
+  $BASE/apis \
+  "$SPEC" \
+  --go-header-file "$(dirname $0)/LICENSE_BOILERPLATE.txt"

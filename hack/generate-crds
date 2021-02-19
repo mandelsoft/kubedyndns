@@ -1,0 +1,57 @@
+#!/bin/bash
+
+loop()
+{
+  cd crds
+  for f in *.yaml; do
+    if [ -f "$f" ]; then
+      cat <<EOF
+${TAB}data = \`
+$(cat "$f")
+  \`
+${TAB}utils.Must(registry.RegisterCRD(data))
+EOF
+    fi
+  done
+}
+
+boilerplate() {
+  D="${PWD}"
+  while [ "$D" != / ]; do
+    if [ -f "$D/hack/LICENSE_BOILERPLATE.txt" ]; then
+      echo "$D/hack/LICENSE_BOILERPLATE.txt"
+      return 0
+    fi
+    D="$(dirname "$D")"
+  done
+  echo "$PROJECT_ROOT"/hack/LICENSE_BOILERPLATE.txt
+}
+
+PROJECT_ROOT=$(dirname $0)/..
+BOILERPLATE="$(boilerplate)"
+
+#echo "ROOT=$PROJECT_ROOT"
+#echo "DIR=$(pwd)"
+
+TAB="$(echo -e "\t")"
+paths=
+sep=
+if [ -n "$*" ]; then
+  for d; do
+     paths="$paths${sep}./$d/."
+     sep=";"
+  done
+else
+  paths=.
+  for d in *; do
+    if [ "$d" != "install" -a "$d" != "crds" -a -d "$d" ]; then
+       paths="$paths;./$d/."
+    fi
+  done
+fi
+mkdir -p crds
+bash "${PROJECT_ROOT}/hack/controller-gen.sh"  \
+   "crd:crdVersions=v1,trivialVersions=false" \
+    paths="$paths" \
+    output:crd:artifacts:config=crds
+
