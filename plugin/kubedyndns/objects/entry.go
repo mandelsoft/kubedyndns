@@ -27,6 +27,7 @@ import (
 	"github.com/miekg/dns"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
 
@@ -150,3 +151,42 @@ func (s *Entry) GetResourceVersion() string { return s.version }
 
 // SetResourceVersion implements the metav1.Object interface.
 func (s *Entry) SetResourceVersion(version string) {}
+
+// Index returns copy of index
+func (s *Entry) Index() []string {
+	return s.index[:]
+}
+
+// Equivalent checks if the update to an entry is something
+// that matters to us or if they are effectively equivalent.
+func (a *Entry) Equivalent(b *Entry) bool {
+	if a == nil || b == nil {
+		return false
+	}
+
+	if len(a.index) != len(b.index) {
+		return false
+	}
+	if len(a.hosts) != len(b.hosts) {
+		return false
+	}
+	if len(a.services) != len(b.services) {
+		return false
+	}
+
+	if !sets.NewString(a.index...).Equal(sets.NewString(b.index...)) {
+		return false
+	}
+	if !sets.NewString(a.hosts...).Equal(sets.NewString(b.hosts...)) {
+		return false
+	}
+	// we should be able to rely on
+	// these being sorted and able to be compared
+	// they are supposed to be in a canonical format
+	for i, sa := range a.services {
+		if sa != b.services[i] {
+			return false
+		}
+	}
+	return true
+}

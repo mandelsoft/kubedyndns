@@ -22,16 +22,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
-	"github.com/mandelsoft/kubedyndns/plugin/objects"
+	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -139,7 +137,7 @@ func entryDNSIndexFunc(obj interface{}) ([]string, error) {
 	if !ok {
 		return nil, errObj
 	}
-	return e.Index, nil
+	return e.Index(), nil
 }
 
 func entryListFunc(ctx context.Context, c clientapi.Interface, ns string, s labels.Selector) func(meta.ListOptions) (runtime.Object, error) {
@@ -266,7 +264,7 @@ func (cntr *controller) detectChanges(oldObj, newObj interface{}) {
 	}
 	switch ob := obj.(type) {
 	case *objects.Entry:
-		if !entryEquivalent(oldObj.(*objects.Entry), newObj.(*objects.Entry)) {
+		if !oldObj.(*objects.Entry).Equivalent(newObj.(*objects.Entry)) {
 			cntr.updateModifed()
 		}
 	default:
@@ -307,40 +305,6 @@ func subsetsEquivalent(sa, sb object.EndpointSubset) bool {
 			return false
 		}
 		if aport.Protocol != bport.Protocol {
-			return false
-		}
-	}
-	return true
-}
-
-// entryEquivalent checks if the update to an entry is something
-// that matters to us or if they are effectively equivalent.
-func entryEquivalent(a, b *objects.Entry) bool {
-	if a == nil || b == nil {
-		return false
-	}
-
-	if len(a.Index) != len(b.Index) {
-		return false
-	}
-	if len(a.Hosts) != len(b.Hosts) {
-		return false
-	}
-	if len(a.Services) != len(b.Services) {
-		return false
-	}
-
-	if !sets.NewString(a.Index...).Equal(sets.NewString(b.Index...)) {
-		return false
-	}
-	if !sets.NewString(a.Hosts...).Equal(sets.NewString(b.Hosts...)) {
-		return false
-	}
-	// we should be able to rely on
-	// these being sorted and able to be compared
-	// they are supposed to be in a canonical format
-	for i, sa := range a.Services {
-		if sa != b.Services[i] {
 			return false
 		}
 	}

@@ -58,7 +58,7 @@ func (k *KubeDynDNS) nsAddrs(external bool, zone string) []dns.RR {
 					// For a headless service, use the endpoints IPs
 					for _, s := range endpoint.Subsets {
 						for _, a := range s.Addresses {
-							svcNames = append(svcNames, endpointHostname(a, k.endpointNameMode)+"."+svcName)
+							svcNames = append(svcNames, endpointHostname(a, k.opts.endpointNameMode)+"."+svcName)
 							svcIPs = append(svcIPs, net.ParseIP(a.IP))
 						}
 					}

@@ -20,8 +20,9 @@ package main
 
 
 import (
-	_ "github.com/mandelsoft/kubedyndns/plugin"
 	_ "github.com/coredns/coredns/core/plugin"
+
+	_ "github.com/mandelsoft/kubedyndns/plugin/kubedyndns"
 
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/coremain"
