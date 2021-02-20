@@ -47,15 +47,56 @@ spec:
           spec:
             description: CoreDNSSpec is  the specification for an dns entry object
             properties:
-              cName:
-                type: string
-              dnsNames:
-                description: DNSName is a DNSName
+              A:
                 items:
                   type: string
                 type: array
-              ip:
+              AAAA:
+                items:
+                  type: string
+                type: array
+              CNAME:
                 type: string
+              SRV:
+                description: ServiceSpec describes a service's SRV records
+                properties:
+                  records:
+                    items:
+                      description: SRVRecord is a service record
+                      properties:
+                        host:
+                          type: string
+                        port:
+                          type: integer
+                        priority:
+                          type: integer
+                        protocol:
+                          type: string
+                        weight:
+                          type: integer
+                      required:
+                      - host
+                      - port
+                      - priority
+                      - protocol
+                      - weight
+                      type: object
+                    type: array
+                  service:
+                    type: string
+                required:
+                - records
+                - service
+                type: object
+              TXT:
+                items:
+                  type: string
+                type: array
+              dnsNames:
+                description: DNSNames is a list of DNSNames
+                items:
+                  type: string
+                type: array
             required:
             - dnsNames
             type: object

@@ -1,3 +1,21 @@
+/*
+ * Copyright 2021 Mandelsoft. All rights reserved.
+ *  This file is licensed under the Apache Software License, v. 2 except as noted
+ *  otherwise in the LICENSE file
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
 // Package kubernetes provides the kubernetes backend.
 package kubedyndns
 
@@ -6,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
 	"github.com/coredns/coredns/plugin"
@@ -15,9 +32,7 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/fall"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 	"github.com/coredns/coredns/request"
-
 	"github.com/miekg/dns"
-	api "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -44,6 +59,7 @@ type KubeDynDNS struct {
 	ttl              uint32
 	opts             controlOpts
 	primaryZoneIndex int
+	localIPs         []net.IP
 }
 
 // New returns a initialized Kubernetes. It default interfaceAddrFunc to return 127.0.0.1. All other
@@ -72,7 +88,7 @@ var (
 
 // Services implements the ServiceBackend interface.
 func (k *KubeDynDNS) Services(ctx context.Context, state request.Request, exact bool, opt plugin.Options) (svcs []msg.Service, err error) {
-	// We're looking again at types, which we've already done in ServeDNS, but there are some types k8s just can't answer.
+
 	switch state.QType() {
 
 	case dns.TypeTXT:
@@ -100,21 +116,6 @@ func (k *KubeDynDNS) Services(ctx context.Context, state request.Request, exact 
 			}
 			if ns.Header().Rrtype == dns.TypeAAAA {
 				svcs = append(svcs, msg.Service{Host: ns.(*dns.AAAA).AAAA.String(), Key: msg.Path(ns.Header().Name, coredns), TTL: k.ttl})
-			}
-		}
-		return svcs, nil
-	}
-
-	if isDefaultNS(state.Name(), state.Zone) {
-		nss := k.nsAddrs(false, state.Zone)
-		var svcs []msg.Service
-		for _, ns := range nss {
-			if ns.Header().Rrtype == dns.TypeA && state.QType() == dns.TypeA {
-				svcs = append(svcs, msg.Service{Host: ns.(*dns.A).A.String(), Key: msg.Path(state.QName(), coredns), TTL: k.ttl})
-				continue
-			}
-			if ns.Header().Rrtype == dns.TypeAAAA && state.QType() == dns.TypeAAAA {
-				svcs = append(svcs, msg.Service{Host: ns.(*dns.AAAA).AAAA.String(), Key: msg.Path(state.QName(), coredns), TTL: k.ttl})
 			}
 		}
 		return svcs, nil
@@ -244,25 +245,40 @@ func (k *KubeDynDNS) Records(ctx context.Context, state request.Request, exact b
 	if e != nil {
 		return nil, e
 	}
-	if r.podOrSvc == "" {
-		return nil, nil
-	}
-
 	if dnsutil.IsReverse(state.Name()) > 0 {
 		return nil, errNoItems
 	}
 
-	if !wildcard(r.namespace) && !k.namespaceExposed(r.namespace) {
-		return nil, errNsNotExposed
+	if r.service != "" && state.QType() != dns.TypeSRV {
+		return nil, errNoItems
 	}
-
-	if r.podOrSvc == Pod {
-		pods, err := k.findPods(r, state.Zone)
-		return pods, err
-	}
-
-	services, err := k.findServices(r, state.Zone)
+	services, err := k.findEntries(r, state.Zone, state.QType())
 	return services, err
+}
+
+// findServices returns the services matching r from the cache.
+func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (services []msg.Service, err error) {
+
+	entries := k.APIConn.EntryIndex(r.domain)
+	if len(entries) == 0 {
+		return nil, errNoItems
+	}
+
+	if r.service == "" {
+		for _, e := range entries {
+			if e.Service.Service == r.service {
+				for _, s := range e.Services(t, r.protocol) {
+					services = append(services, s)
+				}
+			}
+		}
+	} else {
+		for _, e := range entries {
+			services = append(services, e.Services(t, "")...)
+		}
+	}
+
+	return services, nil
 }
 
 // Serial return the SOA serial.

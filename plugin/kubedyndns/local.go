@@ -16,25 +16,40 @@
  *  limitations under the License.
  */
 
-package main
+package kubedyndns
 
 import (
-	_ "github.com/coredns/coredns/core/plugin"
+	"net"
 
-	_ "github.com/mandelsoft/kubedyndns/plugin/kubedyndns"
-
+	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
-	"github.com/coredns/coredns/coremain"
 )
 
-var directives = []string{
-	"kubedyndns",
-}
-
-func init() {
-	dnsserver.Directives = append(directives, dnsserver.Directives...)
-}
-
-func main() {
-	coremain.Run()
+// boundIPs returns the list of non-loopback IPs that CoreDNS is bound to
+func boundIPs(c *caddy.Controller) (ips []net.IP) {
+	conf := dnsserver.GetConfig(c)
+	hosts := conf.ListenHosts
+	if hosts == nil || hosts[0] == "" {
+		hosts = nil
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return nil
+		}
+		for _, addr := range addrs {
+			hosts = append(hosts, addr.String())
+		}
+	}
+	for _, host := range hosts {
+		ip, _, _ := net.ParseCIDR(host)
+		ip4 := ip.To4()
+		if ip4 != nil && !ip4.IsLoopback() {
+			ips = append(ips, ip4)
+			continue
+		}
+		ip6 := ip.To16()
+		if ip6 != nil && !ip6.IsLoopback() {
+			ips = append(ips, ip6)
+		}
+	}
+	return ips
 }

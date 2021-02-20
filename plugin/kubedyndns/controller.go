@@ -29,7 +29,7 @@ import (
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
-	"github.com/mandelsoft/kubedyndns/plugin/objects"
+	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,7 +47,7 @@ const (
 
 type Controller interface {
 	EntryList() []*objects.Entry
-	EmtryIndex(string) []*objects.Entry
+	EntryIndex(string) []*objects.Entry
 
 	GetNamespaceByName(string) (*corev1.Namespace, error)
 
@@ -116,7 +116,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		},
 		&corev1.Service{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
-		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
+		cache.Indexers{DNSIndex: entryDNSIndexFunc},
 		object.DefaultProcessor(objects.ToEntry, nil),
 	)
 
@@ -130,14 +130,6 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		cache.ResourceEventHandlerFuncs{})
 
 	return &cntr
-}
-
-func entryIPIndexFunc(obj interface{}) ([]string, error) {
-	e, ok := obj.(*objects.Entry)
-	if !ok {
-		return nil, errObj
-	}
-	return e.IPs, nil
 }
 
 func entryDNSIndexFunc(obj interface{}) ([]string, error) {
@@ -272,7 +264,7 @@ func (cntr *controller) detectChanges(oldObj, newObj interface{}) {
 	}
 	switch ob := obj.(type) {
 	case *objects.Entry:
-		if !entryEquivalent(oldObj.(*objects.Entry), newObj.(*objects.Entry)) {
+		if !(oldObj.(*objects.Entry).Equal(newObj.(*objects.Entry))) {
 			cntr.updateModifed()
 		}
 	default:
@@ -313,28 +305,6 @@ func subsetsEquivalent(sa, sb object.EndpointSubset) bool {
 			return false
 		}
 		if aport.Protocol != bport.Protocol {
-			return false
-		}
-	}
-	return true
-}
-
-// entryEquivalent checks if the update to an entry is something
-// that matters to us or if they are effectively equivalent.
-func entryEquivalent(a, b *objects.Entry) bool {
-	if a == nil || b == nil {
-		return false
-	}
-
-	if len(a.IPs) != len(b.IPs) {
-		return false
-	}
-
-	// we should be able to rely on
-	// these being sorted and able to be compared
-	// they are supposed to be in a canonical format
-	for i, sa := range a.IPs {
-		if sa != b.IPs[i] {
 			return false
 		}
 	}
