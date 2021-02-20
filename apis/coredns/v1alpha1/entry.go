@@ -17,6 +17,7 @@ type CoreDNSEntryList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CoreDNSEntry `json:"items"`
 }
+
 // +kubebuilder:storageversion
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=coredns
@@ -40,7 +41,26 @@ type CoreDNSSpec struct {
 	// DNSNames is a list of DNSNames
 	DNSNames []string `json:"dnsNames"`
 	// +optional
-	IP string `json:"ip,omitempty"`
+	A []string `json:"A,omitempty"`
 	// +optional
-	CName string `json:"cName,omitempty"`
+	AAAA []string `json:"AAAA,omitempty"`
+	// +optional
+	TXT []string `json:"TXT,omitempty"`
+	// +optional
+	SRV []SRVRecord `json:"SRV,omitempty"`
+	// +optional
+	CNAME string `json:"CNAME,omitempty"`
+}
+
+const PROTO_TCP = "TCP"
+const PROTO_UDP = "UPD"
+
+// SRVRecord is a service record
+type SRVRecord struct {
+	Service  string `json:"service"`
+	Protocol string `json:"protocol"`
+	Priority int    `json:"priority"`
+	Weight   int    `json:"weight"`
+	Port     int    `json:"port"`
+	Target   string `json:"target"`
 }

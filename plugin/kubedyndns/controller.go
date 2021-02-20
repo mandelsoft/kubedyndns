@@ -22,11 +22,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 	"github.com/mandelsoft/kubedyndns/plugin/objects"
@@ -47,7 +49,7 @@ const (
 
 type Controller interface {
 	EntryList() []*objects.Entry
-	EmtryIndex(string) []*objects.Entry
+	EntryIndex(string) []*objects.Entry
 
 	GetNamespaceByName(string) (*corev1.Namespace, error)
 
@@ -116,7 +118,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		},
 		&corev1.Service{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
-		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
+		cache.Indexers{DNSIndex: entryDNSIndexFunc},
 		object.DefaultProcessor(objects.ToEntry, nil),
 	)
 
@@ -130,14 +132,6 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		cache.ResourceEventHandlerFuncs{})
 
 	return &cntr
-}
-
-func entryIPIndexFunc(obj interface{}) ([]string, error) {
-	e, ok := obj.(*objects.Entry)
-	if !ok {
-		return nil, errObj
-	}
-	return e.IPs, nil
 }
 
 func entryDNSIndexFunc(obj interface{}) ([]string, error) {
@@ -326,15 +320,27 @@ func entryEquivalent(a, b *objects.Entry) bool {
 		return false
 	}
 
-	if len(a.IPs) != len(b.IPs) {
+	if len(a.Index) != len(b.Index) {
+		return false
+	}
+	if len(a.Hosts) != len(b.Hosts) {
+		return false
+	}
+	if len(a.Services) != len(b.Services) {
 		return false
 	}
 
+	if !sets.NewString(a.Index...).Equal(sets.NewString(b.Index...)) {
+		return false
+	}
+	if !sets.NewString(a.Hosts...).Equal(sets.NewString(b.Hosts...)) {
+		return false
+	}
 	// we should be able to rely on
 	// these being sorted and able to be compared
 	// they are supposed to be in a canonical format
-	for i, sa := range a.IPs {
-		if sa != b.IPs[i] {
+	for i, sa := range a.Services {
+		if sa != b.Services[i] {
 			return false
 		}
 	}
