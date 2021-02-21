@@ -41,7 +41,7 @@ func parseRequest(name, zone string) (r recordRequest, err error) {
 		if s == "_tcp" || s == "_udp" {
 			r.service = strings.Join(segs[0:i], ".")
 			r.domain = strings.Join(segs[i+1:], ".")
-			r.protocol = stripUnderscore(s)
+			r.protocol = strings.ToUpper(stripUnderscore(s))
 			return
 		}
 	}

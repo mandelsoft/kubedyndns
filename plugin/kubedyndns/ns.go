@@ -37,49 +37,12 @@ func (k *KubeDynDNS) nsAddrs(external bool, zone string) []dns.RR {
 		svcIPs   []net.IP
 	)
 
-	// Find the CoreDNS Endpoints
-	for _, localIP := range k.localIPs {
-		endpoints := k.APIConn.EpIndexReverse(localIP.String())
-
-		// Collect IPs for all Services of the Endpoints
-		for _, endpoint := range endpoints {
-			svcs := k.APIConn.SvcIndex(endpoint.Index)
-			for _, svc := range svcs {
-				if external {
-					svcName := strings.Join([]string{svc.Name, svc.Namespace, zone}, ".")
-					for _, exIP := range svc.ExternalIPs {
-						svcNames = append(svcNames, svcName)
-						svcIPs = append(svcIPs, net.ParseIP(exIP))
-					}
-					continue
-				}
-				svcName := strings.Join([]string{svc.Name, svc.Namespace, Svc, zone}, ".")
-				if svc.Headless() {
-					// For a headless service, use the endpoints IPs
-					for _, s := range endpoint.Subsets {
-						for _, a := range s.Addresses {
-							svcNames = append(svcNames, endpointHostname(a, k.opts.endpointNameMode)+"."+svcName)
-							svcIPs = append(svcIPs, net.ParseIP(a.IP))
-						}
-					}
-				} else {
-					for _, clusterIP := range svc.ClusterIPs {
-						svcNames = append(svcNames, svcName)
-						svcIPs = append(svcIPs, net.ParseIP(clusterIP))
-					}
-				}
-			}
-		}
-	}
-
 	// If no local IPs matched any endpoints, use the localIPs directly
-	if len(svcIPs) == 0 {
-		svcIPs = make([]net.IP, len(k.localIPs))
-		svcNames = make([]string, len(k.localIPs))
-		for i, localIP := range k.localIPs {
-			svcNames[i] = defaultNSName + zone
-			svcIPs[i] = localIP
-		}
+	svcIPs = make([]net.IP, len(k.localIPs))
+	svcNames = make([]string, len(k.localIPs))
+	for i, localIP := range k.localIPs {
+		svcNames[i] = defaultNSName + zone
+		svcIPs[i] = localIP
 	}
 
 	// Create an RR slice of collected IPs

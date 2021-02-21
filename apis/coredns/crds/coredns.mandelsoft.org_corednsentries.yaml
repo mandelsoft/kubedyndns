@@ -58,30 +58,36 @@ spec:
               CNAME:
                 type: string
               SRV:
-                items:
-                  description: SRVRecord is a service record
-                  properties:
-                    port:
-                      type: integer
-                    priority:
-                      type: integer
-                    protocol:
-                      type: string
-                    service:
-                      type: string
-                    target:
-                      type: string
-                    weight:
-                      type: integer
-                  required:
-                  - port
-                  - priority
-                  - protocol
-                  - service
-                  - target
-                  - weight
-                  type: object
-                type: array
+                description: ServiceSpec describes a service's SRV records
+                properties:
+                  records:
+                    items:
+                      description: SRVRecord is a service record
+                      properties:
+                        host:
+                          type: string
+                        port:
+                          type: integer
+                        priority:
+                          type: integer
+                        protocol:
+                          type: string
+                        weight:
+                          type: integer
+                      required:
+                      - host
+                      - port
+                      - priority
+                      - protocol
+                      - weight
+                      type: object
+                    type: array
+                  service:
+                    type: string
+                required:
+                - records
+                - service
+                type: object
               TXT:
                 items:
                   type: string

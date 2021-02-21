@@ -36,13 +36,14 @@ import (
 
 // Entry is a stripped down api.CoreDNSEntry with only the items we need for CoreDNS.
 type Entry struct {
-	version   string
-	name      string
-	namespace string
-	ttl       uint32
-	index     []string
-	hosts     []string
-	services  []api.SRVRecord
+	Version   string
+	Name      string
+	Namespace string
+	Ttl       uint32
+	Index     []string
+	Hosts     []string
+	Text      []string
+	Service   api.ServiceSpec
 
 	*object.Empty
 }
@@ -63,9 +64,9 @@ func ToEntry(obj meta.Object) (meta.Object, error) {
 		return nil, fmt.Errorf("unexpected object %v", obj)
 	}
 	s := &Entry{
-		version:   e.GetResourceVersion(),
-		name:      e.GetName(),
-		namespace: e.GetNamespace(),
+		Version:   e.GetResourceVersion(),
+		Name:      e.GetName(),
+		Namespace: e.GetNamespace(),
 	}
 
 	var hosts []string
@@ -81,11 +82,15 @@ func ToEntry(obj meta.Object) (meta.Object, error) {
 			hosts = append(hosts, ips)
 		}
 	}
+	copy(s.Text, e.Spec.TXT)
 	if len(e.Spec.CNAME) > 0 {
 		hosts = append(hosts, plugin.Name(e.Spec.CNAME).Normalize())
 	}
-	s.hosts = hosts
-	copy(s.services, e.Spec.SRV)
+	s.Hosts = hosts
+	if e.Spec.SRV != nil {
+		s.Service.Service = e.Spec.SRV.Service
+		copy(s.Service.Records, e.Spec.SRV.Records)
+	}
 
 	*e = api.CoreDNSEntry{}
 
@@ -97,96 +102,119 @@ var _ runtime.Object = &Entry{}
 // DeepCopyObject implements the ObjectKind interface.
 func (s *Entry) DeepCopyObject() runtime.Object {
 	s1 := &Entry{
-		version:   s.version,
-		name:      s.name,
-		namespace: s.namespace,
+		Version:   s.Version,
+		Name:      s.Name,
+		Namespace: s.Namespace,
 	}
-	copy(s1.index, s.index)
-	copy(s1.hosts, s.hosts)
-	copy(s1.services, s.services)
+	copy(s1.Index, s.Index)
+	copy(s1.Hosts, s.Hosts)
+	copy(s1.Text, s.Text)
+	if s.Service.Service != "" {
+		s1.Service.Service = s.Service.Service
+		copy(s1.Service.Records, s.Service.Records)
+	}
 	return s1
 }
 
-func (s *Entry) Services(t uint16) []msg.Service {
+// Equaö checks if the update to an entry is something
+// that matters to us or if they are effectively equivalent.
+func (e *Entry) Equal(b *Entry) bool {
+	if e == nil || b == nil {
+		return false
+	}
+
+	if len(e.Index) != len(b.Index) {
+		return false
+	}
+	if len(e.Hosts) != len(b.Hosts) {
+		return false
+	}
+	if len(e.Text) != len(b.Text) {
+		return false
+	}
+	if e.Service.Service != b.Service.Service {
+		return false
+	}
+	// we should be able to rely on
+	// these being sorted and able to be compared
+	// they are supposed to be in a canonical format
+	if !sets.NewString(e.Index...).Equal(sets.NewString(b.Index...)) {
+		return false
+	}
+	if !sets.NewString(e.Hosts...).Equal(sets.NewString(b.Hosts...)) {
+		return false
+	}
+	if !sets.NewString(e.Text...).Equal(sets.NewString(b.Text...)) {
+		return false
+	}
+	if e.Service.Service != "" {
+		if len(e.Service.Records) != len(b.Service.Records) {
+			return false
+		}
+		for i, sa := range e.Service.Records {
+			if sa != b.Service.Records[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (s *Entry) Services(t uint16, p string) []msg.Service {
 	var result []msg.Service
 	switch t {
 	case dns.TypeA, dns.TypeAAAA, dns.TypeCNAME:
-		for _, h := range s.hosts {
+		for _, h := range s.Hosts {
 			result = append(result, msg.Service{
 				Host: h,
 				Port: -1,
 				Mail: false,
-				TTL:  s.ttl,
+				TTL:  s.Ttl,
+			})
+		}
+	case dns.TypeTXT:
+		for _, h := range s.Text {
+			result = append(result, msg.Service{
+				Host: h,
+				Port: -1,
+				Mail: false,
+				TTL:  s.Ttl,
 			})
 		}
 	case dns.TypeSRV:
-		for _, h := range s.services {
-			result = append(result, msg.Service{
-				Host:     h.Target,
-				Port:     h.Port,
-				Priority: h.Priority,
-				Weight:   h.Weight,
-				Mail:     false,
-				TTL:      s.ttl,
-			})
+		if s.Service.Service != "" {
+			for _, h := range s.Service.Records {
+				if h.Protocol == p {
+					result = append(result, msg.Service{
+						Host:     h.Host,
+						Port:     h.Port,
+						Priority: h.Priority,
+						Weight:   h.Weight,
+						Mail:     false,
+						TTL:      s.Ttl,
+					})
+				}
+			}
 		}
 	}
 	return result
 }
 
 // GetNamespace implements the metav1.Object interface.
-func (s *Entry) GetNamespace() string { return s.namespace }
+func (s *Entry) GetNamespace() string { return s.Namespace }
 
 // SetNamespace implements the metav1.Object interface.
 func (s *Entry) SetNamespace(namespace string) {}
 
 // GetName implements the metav1.Object interface.
-func (s *Entry) GetName() string { return s.name }
+func (s *Entry) GetName() string { return s.Name }
 
 // SetName implements the metav1.Object interface.
 func (s *Entry) SetName(name string) {}
 
 // GetResourceVersion implements the metav1.Object interface.
-func (s *Entry) GetResourceVersion() string { return s.version }
+
+func (s *Entry) GetResourceVersion() string { return s.Version }
 
 // SetResourceVersion implements the metav1.Object interface.
 func (s *Entry) SetResourceVersion(version string) {}
-
-// Index returns copy of index
-func (s *Entry) Index() []string {
-	return s.index[:]
-}
-
-// Equivalent checks if the update to an entry is something
-// that matters to us or if they are effectively equivalent.
-func (a *Entry) Equivalent(b *Entry) bool {
-	if a == nil || b == nil {
-		return false
-	}
-
-	if len(a.index) != len(b.index) {
-		return false
-	}
-	if len(a.hosts) != len(b.hosts) {
-		return false
-	}
-	if len(a.services) != len(b.services) {
-		return false
-	}
-
-	if !sets.NewString(a.index...).Equal(sets.NewString(b.index...)) {
-		return false
-	}
-	if !sets.NewString(a.hosts...).Equal(sets.NewString(b.hosts...)) {
-		return false
-	}
-	// we should be able to rely on
-	// these being sorted and able to be compared
-	// they are supposed to be in a canonical format
-	for i, sa := range a.services {
-		if sa != b.services[i] {
-			return false
-		}
-	}
-	return true
-}

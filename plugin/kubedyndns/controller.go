@@ -137,7 +137,7 @@ func entryDNSIndexFunc(obj interface{}) ([]string, error) {
 	if !ok {
 		return nil, errObj
 	}
-	return e.Index(), nil
+	return e.Index, nil
 }
 
 func entryListFunc(ctx context.Context, c clientapi.Interface, ns string, s labels.Selector) func(meta.ListOptions) (runtime.Object, error) {
@@ -264,7 +264,7 @@ func (cntr *controller) detectChanges(oldObj, newObj interface{}) {
 	}
 	switch ob := obj.(type) {
 	case *objects.Entry:
-		if !oldObj.(*objects.Entry).Equivalent(newObj.(*objects.Entry)) {
+		if !(oldObj.(*objects.Entry).Equal(newObj.(*objects.Entry))) {
 			cntr.updateModifed()
 		}
 	default:

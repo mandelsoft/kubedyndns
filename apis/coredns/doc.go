@@ -24,4 +24,3 @@ package coredns
 //go:generate ../../hack/generate-crds
 //go:generate ../../hack/generate-code github.com/mandelsoft/kubedyndns coredns:v1alpha1
 // +kubebuilder:skip
-

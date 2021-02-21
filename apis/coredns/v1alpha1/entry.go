@@ -47,7 +47,7 @@ type CoreDNSSpec struct {
 	// +optional
 	TXT []string `json:"TXT,omitempty"`
 	// +optional
-	SRV []SRVRecord `json:"SRV,omitempty"`
+	SRV *ServiceSpec `json:"SRV,omitempty"`
 	// +optional
 	CNAME string `json:"CNAME,omitempty"`
 }
@@ -55,12 +55,17 @@ type CoreDNSSpec struct {
 const PROTO_TCP = "TCP"
 const PROTO_UDP = "UPD"
 
+// ServiceSpec describes a service's SRV records
+type ServiceSpec struct {
+	Service string      `json:"service"`
+	Records []SRVRecord `json:"records"`
+}
+
 // SRVRecord is a service record
 type SRVRecord struct {
-	Service  string `json:"service"`
 	Protocol string `json:"protocol"`
 	Priority int    `json:"priority"`
 	Weight   int    `json:"weight"`
 	Port     int    `json:"port"`
-	Target   string `json:"target"`
+	Host     string `json:"host"`
 }
