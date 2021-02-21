@@ -246,25 +246,41 @@ func (k *KubeDynDNS) Records(ctx context.Context, state request.Request, exact b
 	if e != nil {
 		return nil, e
 	}
-	if r.podOrSvc == "" {
-		return nil, nil
-	}
 
 	if dnsutil.IsReverse(state.Name()) > 0 {
 		return nil, errNoItems
 	}
 
-	if !wildcard(r.namespace) && !k.namespaceExposed(r.namespace) {
-		return nil, errNsNotExposed
+	if r.service != "" && state.QType() != dns.TypeSRV {
+		return nil, errNoItems
 	}
-
-	if r.podOrSvc == Pod {
-		pods, err := k.findPods(r, state.Zone)
-		return pods, err
-	}
-
-	services, err := k.findServices(r, state.Zone)
+	services, err := k.findEntries(r, state.Zone, state.QType())
 	return services, err
+}
+
+// findServices returns the services matching r from the cache.
+func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (services []msg.Service, err error) {
+
+	entries := k.APIConn.EntryIndex(r.domain)
+	if len(entries) == 0 {
+		return nil, errNoItems
+	}
+
+	if r.service == "" {
+		for _, e := range entries {
+			if e.Service.Service == r.service {
+				for _, s := range e.Services(t, r.protocol) {
+					services = append(services, s)
+				}
+			}
+		}
+	} else {
+		for _, e := range entries {
+			services = append(services, e.Services(t, "")...)
+		}
+	}
+
+	return services, nil
 }
 
 // Serial return the SOA serial.

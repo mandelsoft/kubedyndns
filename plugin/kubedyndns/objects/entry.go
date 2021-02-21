@@ -213,7 +213,6 @@ func (s *Entry) GetName() string { return s.Name }
 func (s *Entry) SetName(name string) {}
 
 // GetResourceVersion implements the metav1.Object interface.
-
 func (s *Entry) GetResourceVersion() string { return s.Version }
 
 // SetResourceVersion implements the metav1.Object interface.
