@@ -19,6 +19,7 @@
 package objects
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
+	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 )
@@ -39,6 +41,7 @@ type Entry struct {
 	Version   string
 	Name      string
 	Namespace string
+	Valid     bool
 	Ttl       uint32
 	Index     []string
 	Hosts     []string
@@ -57,44 +60,90 @@ func EntryKey(obj *api.CoreDNSEntry) []string {
 	return keys
 }
 
-// ToEntry converts an api.Service to a *Service.
-func ToEntry(obj meta.Object) (meta.Object, error) {
-	e, ok := obj.(*api.CoreDNSEntry)
-	if !ok {
-		return nil, fmt.Errorf("unexpected object %v", obj)
-	}
-	s := &Entry{
-		Version:   e.GetResourceVersion(),
-		Name:      e.GetName(),
-		Namespace: e.GetNamespace(),
-	}
-
-	var hosts []string
-	for _, ips := range e.Spec.A {
-		ip := net.ParseIP(ips)
-		if ip != nil && ip.To4() != nil {
-			hosts = append(hosts, ips)
+// ToEntry returns a client specific converter for converting an api.Service to a *Service.
+func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Object) (meta.Object, error) {
+	return func(obj meta.Object) (meta.Object, error) {
+		e, ok := obj.(*api.CoreDNSEntry)
+		if !ok {
+			return nil, fmt.Errorf("unexpected object %v", obj)
 		}
-	}
-	for _, ips := range e.Spec.AAAA {
-		ip := net.ParseIP(ips)
-		if ip != nil && ip.To4() == nil {
-			hosts = append(hosts, ips)
+		s := &Entry{
+			Version:   e.GetResourceVersion(),
+			Name:      e.GetName(),
+			Namespace: e.GetNamespace(),
 		}
-	}
-	copy(s.Text, e.Spec.TXT)
-	if len(e.Spec.CNAME) > 0 {
-		hosts = append(hosts, plugin.Name(e.Spec.CNAME).Normalize())
-	}
-	s.Hosts = hosts
-	if e.Spec.SRV != nil {
-		s.Service.Service = e.Spec.SRV.Service
-		copy(s.Service.Records, e.Spec.SRV.Records)
-	}
 
-	*e = api.CoreDNSEntry{}
+		var err error
+		var hosts []string
+		for _, ips := range e.Spec.A {
+			ip := net.ParseIP(ips)
+			if ip == nil {
+				err = fmt.Errorf("invalid ip address %q", ips)
+			}
+			if ip != nil && ip.To4() != nil {
+				hosts = append(hosts, ips)
+			}
+		}
+		for _, ips := range e.Spec.AAAA {
+			ip := net.ParseIP(ips)
+			if ip == nil {
+				err = fmt.Errorf("invalid ip address %q", ips)
+			}
+			if ip != nil && ip.To4() == nil {
+				hosts = append(hosts, ips)
+			}
+		}
+		copy(s.Text, e.Spec.TXT)
+		if len(e.Spec.CNAME) > 0 {
+			hosts = append(hosts, plugin.Name(e.Spec.CNAME).Normalize())
+		}
+		s.Hosts = hosts
+		if e.Spec.SRV != nil {
+			s.Service.Service = e.Spec.SRV.Service
+			copy(s.Service.Records, e.Spec.SRV.Records)
+		}
 
-	return s, nil
+		if len(e.Spec.DNSNames) == 0 {
+			err = fmt.Errorf("at least one DNS name is required")
+		}
+		if len(e.Spec.A) == 0 && len(e.Spec.AAAA) == 0 && len(e.Spec.CNAME) == 0 && (e.Spec.SRV == nil || len(e.Spec.SRV.Records) == 0) {
+			err = fmt.Errorf("no record defined")
+		}
+		if e.Spec.SRV != nil {
+			if len(e.Spec.SRV.Records) != 0 && len(e.Spec.SRV.Service) == 0 {
+				err = fmt.Errorf("service name required for SRV record")
+			}
+			for i, r := range e.Spec.SRV.Records {
+				if r.Protocol != "TCP" && r.Protocol != "UDP" {
+					err = fmt.Errorf("invalid protocol %q for SRV record %d", r.Protocol, i)
+				}
+				if r.Port <= 0 {
+					err = fmt.Errorf("invalid port for SRV record %d", i)
+				}
+				if len(r.Host) == 0 {
+					err = fmt.Errorf("host missing for SRV record %d", i)
+				}
+			}
+		}
+		if err != nil {
+			s.Valid = false
+			if e.Status.Message != err.Error() || e.Status.State != "Invalid" {
+				e.Status.Message = err.Error()
+				e.Status.State = "Invalid"
+				client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+			}
+		} else {
+			s.Valid = true
+			if e.Status.Message != "" || e.Status.State != "Ok" {
+				e.Status.Message = ""
+				e.Status.State = "Ok"
+				client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+			}
+		}
+		*e = api.CoreDNSEntry{}
+
+		return s, nil
+	}
 }
 
 var _ runtime.Object = &Entry{}
@@ -161,6 +210,9 @@ func (e *Entry) Equal(b *Entry) bool {
 }
 
 func (s *Entry) Services(t uint16, p string) []msg.Service {
+	if !s.Valid {
+		return nil
+	}
 	var result []msg.Service
 	switch t {
 	case dns.TypeA, dns.TypeAAAA, dns.TypeCNAME:

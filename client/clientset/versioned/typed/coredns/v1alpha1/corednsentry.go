@@ -41,6 +41,7 @@ type CoreDNSEntriesGetter interface {
 type CoreDNSEntryInterface interface {
 	Create(ctx context.Context, coreDNSEntry *v1alpha1.CoreDNSEntry, opts v1.CreateOptions) (*v1alpha1.CoreDNSEntry, error)
 	Update(ctx context.Context, coreDNSEntry *v1alpha1.CoreDNSEntry, opts v1.UpdateOptions) (*v1alpha1.CoreDNSEntry, error)
+	UpdateStatus(ctx context.Context, coreDNSEntry *v1alpha1.CoreDNSEntry, opts v1.UpdateOptions) (*v1alpha1.CoreDNSEntry, error)
 	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
 	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1alpha1.CoreDNSEntry, error)
@@ -129,6 +130,22 @@ func (c *coreDNSEntries) Update(ctx context.Context, coreDNSEntry *v1alpha1.Core
 		Namespace(c.ns).
 		Resource("corednsentries").
 		Name(coreDNSEntry.Name).
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Body(coreDNSEntry).
+		Do(ctx).
+		Into(result)
+	return
+}
+
+// UpdateStatus was generated because the type contains a Status member.
+// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
+func (c *coreDNSEntries) UpdateStatus(ctx context.Context, coreDNSEntry *v1alpha1.CoreDNSEntry, opts v1.UpdateOptions) (result *v1alpha1.CoreDNSEntry, err error) {
+	result = &v1alpha1.CoreDNSEntry{}
+	err = c.client.Put().
+		Namespace(c.ns).
+		Resource("corednsentries").
+		Name(coreDNSEntry.Name).
+		SubResource("status").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(coreDNSEntry).
 		Do(ctx).

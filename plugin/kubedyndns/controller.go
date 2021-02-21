@@ -117,7 +117,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		&corev1.Service{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{DNSIndex: entryDNSIndexFunc},
-		object.DefaultProcessor(objects.ToEntry, nil),
+		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client), nil),
 	)
 
 	cntr.nsLister, cntr.nsController = cache.NewInformer(

@@ -19,18 +19,21 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.hostname
-      name: Hostname
+    - jsonPath: .spec.dnsNames
+      name: DNSNames
       type: string
-    - jsonPath: .spec.scheme
-      name: URLScheme
+    - jsonPath: .spec.A
+      name: A
       type: string
-    - jsonPath: .spec.path
-      name: Path
+    - jsonPath: .spec.CNAME
+      name: CNAME
       type: string
-    - jsonPath: .spec.port
-      name: Port
-      type: number
+    - jsonPath: .spec.SRV.service
+      name: SRV
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -100,12 +103,21 @@ spec:
             required:
             - dnsNames
             type: object
+          status:
+            description: CoreDNSStatus describes the statuso an entry
+            properties:
+              message:
+                type: string
+              state:
+                type: string
+            type: object
         required:
         - spec
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}
 status:
   acceptedNames:
     kind: ""

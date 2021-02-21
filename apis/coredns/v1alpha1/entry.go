@@ -21,10 +21,12 @@ type CoreDNSEntryList struct {
 // +kubebuilder:storageversion
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=coredns
-// +kubebuilder:printcolumn:name=Hostname,JSONPath=".spec.hostname",type=string
-// +kubebuilder:printcolumn:name=URLScheme,JSONPath=".spec.scheme",type=string
-// +kubebuilder:printcolumn:name=Path,JSONPath=".spec.path",type=string
-// +kubebuilder:printcolumn:name=Port,JSONPath=".spec.port",type=number
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name=DNSNames,JSONPath=".spec.dnsNames",type=string
+// +kubebuilder:printcolumn:name=A,JSONPath=".spec.A",type=string
+// +kubebuilder:printcolumn:name=CNAME,JSONPath=".spec.CNAME",type=string
+// +kubebuilder:printcolumn:name=SRV,JSONPath=".spec.SRV.service",type=string
+// +kubebuilder:printcolumn:name=State,JSONPath=".status.state",type=string
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -34,6 +36,8 @@ type CoreDNSEntry struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec CoreDNSSpec `json:"spec"`
+	// +optional
+	Status CoreDNSStatus `json:"status"`
 }
 
 // CoreDNSSpec is  the specification for an dns entry object
@@ -68,4 +72,12 @@ type SRVRecord struct {
 	Weight   int    `json:"weight"`
 	Port     int    `json:"port"`
 	Host     string `json:"host"`
+}
+
+// CoreDNSStatus describes the statuso an entry
+type CoreDNSStatus struct {
+	// +optional
+	State string `json:"state,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
 }
