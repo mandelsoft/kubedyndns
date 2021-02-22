@@ -1,0 +1,13 @@
+
+.:1053 {
+  errors
+  health
+  ready
+  kubedyndns test {
+    kubeconfig secret/kubeconfig default
+    fallthrough
+    ttl 30
+  }
+  forward . /etc/resolv.conf
+  cache 30
+}

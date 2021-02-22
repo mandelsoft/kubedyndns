@@ -1,3 +1,4 @@
 *.sw[pq]
 /local
 /.idea
+/coredns

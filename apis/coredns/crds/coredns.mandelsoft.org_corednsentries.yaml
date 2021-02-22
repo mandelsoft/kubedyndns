@@ -15,7 +15,7 @@ spec:
     plural: corednsentries
     shortNames:
     - cdnse
-    singular: coredns
+    singular: corednsentry
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -68,21 +68,24 @@ spec:
                       description: SRVRecord is a service record
                       properties:
                         host:
+                          description: Target of the service record
                           type: string
                         port:
+                          description: Port of the service record
                           type: integer
                         priority:
+                          description: Priority of the service record
                           type: integer
                         protocol:
+                          description: Protocol of the service record (UDP/TCP)
                           type: string
                         weight:
+                          description: Weight of the service record
                           type: integer
                       required:
                       - host
                       - port
-                      - priority
                       - protocol
-                      - weight
                       type: object
                     type: array
                   service:
@@ -107,8 +110,10 @@ spec:
             description: CoreDNSStatus describes the statuso an entry
             properties:
               message:
+                description: Error message in case of an invalid entry
                 type: string
               state:
+                description: State of the dns entry object
                 type: string
             type: object
         required:

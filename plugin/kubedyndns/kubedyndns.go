@@ -77,7 +77,7 @@ const (
 	// DNSSchemaVersion is the schema version: https://github.com/kubernetes/dns/blob/master/docs/specification.md
 	DNSSchemaVersion = "1.1.0"
 	// defaultTTL to apply to all answers.
-	defaultTTL = 5
+	defaultTTL = 10
 )
 
 var (
@@ -90,21 +90,6 @@ var (
 func (k *KubeDynDNS) Services(ctx context.Context, state request.Request, exact bool, opt plugin.Options) (svcs []msg.Service, err error) {
 
 	switch state.QType() {
-
-	case dns.TypeTXT:
-		// 1 label + zone, label must be "dns-version".
-		t, _ := dnsutil.TrimZone(state.Name(), state.Zone)
-
-		segs := dns.SplitDomainName(t)
-		if len(segs) != 1 {
-			return nil, nil
-		}
-		if segs[0] != "dns-version" {
-			return nil, nil
-		}
-		svc := msg.Service{Text: DNSSchemaVersion, TTL: 28800, Key: msg.Path(state.QName(), coredns)}
-		return []msg.Service{svc}, nil
-
 	case dns.TypeNS:
 		// We can only get here if the qname equals the zone, see ServeDNS in handler.go.
 		nss := k.nsAddrs(false, state.Zone)
@@ -123,20 +108,7 @@ func (k *KubeDynDNS) Services(ctx context.Context, state request.Request, exact 
 
 	s, e := k.Records(ctx, state, false)
 
-	// SRV for external services is not yet implemented, so remove those records.
-
-	if state.QType() != dns.TypeSRV {
-		return s, e
-	}
-
-	internal := []msg.Service{}
-	for _, svc := range s {
-		if t, _ := svc.HostType(); t != dns.TypeCNAME {
-			internal = append(internal, svc)
-		}
-	}
-
-	return internal, e
+	return s, e
 }
 
 // primaryZone will return the first non-reverse zone being handled by this plugin
@@ -259,22 +231,22 @@ func (k *KubeDynDNS) Records(ctx context.Context, state request.Request, exact b
 // findServices returns the services matching r from the cache.
 func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (services []msg.Service, err error) {
 
-	entries := k.APIConn.EntryIndex(r.domain)
+	entries := k.APIConn.EntryDNSIndex(r.domain + "." + zone)
 	if len(entries) == 0 {
 		return nil, errNoItems
 	}
 
-	if r.service == "" {
+	if r.service != "" {
 		for _, e := range entries {
 			if e.Service.Service == r.service {
-				for _, s := range e.Services(t, r.protocol) {
+				for _, s := range e.Services(t, r.protocol, k.ttl) {
 					services = append(services, s)
 				}
 			}
 		}
 	} else {
 		for _, e := range entries {
-			services = append(services, e.Services(t, "")...)
+			services = append(services, e.Services(t, "", k.ttl)...)
 		}
 	}
 

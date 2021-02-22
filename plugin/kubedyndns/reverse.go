@@ -36,5 +36,22 @@ func (k *KubeDynDNS) Reverse(ctx context.Context, state request.Request, exact b
 		return nil, e
 	}
 
-	return nil, nil
+	records := k.serviceRecordForIP(ip, state.Name())
+	if len(records) == 0 {
+		return records, errNoItems
+	}
+	return records, nil
+}
+
+// serviceRecordForIP gets a service record with a cluster ip matching the ip argument
+// If a service cluster ip does not match, it checks all endpoints
+func (k *KubeDynDNS) serviceRecordForIP(ip, name string) []msg.Service {
+	// First check services with cluster ips
+	for _, service := range k.APIConn.EntryIPIndex(ip) {
+		if len(service.Index) > 0 {
+			domain := service.Index[0]
+			return []msg.Service{{Host: domain, TTL: k.ttl}}
+		}
+	}
+	return nil
 }

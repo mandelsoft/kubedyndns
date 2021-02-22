@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/etcd/msg"
@@ -73,6 +74,9 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 			Namespace: e.GetNamespace(),
 		}
 
+		for _, n := range e.Spec.DNSNames {
+			s.Index = append(s.Index, plugin.Name(n).Normalize())
+		}
 		var err error
 		var hosts []string
 		for _, ips := range e.Spec.A {
@@ -93,14 +97,14 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 				hosts = append(hosts, ips)
 			}
 		}
-		copy(s.Text, e.Spec.TXT)
+		set(&s.Text, e.Spec.TXT)
 		if len(e.Spec.CNAME) > 0 {
 			hosts = append(hosts, plugin.Name(e.Spec.CNAME).Normalize())
 		}
 		s.Hosts = hosts
 		if e.Spec.SRV != nil {
 			s.Service.Service = e.Spec.SRV.Service
-			copy(s.Service.Records, e.Spec.SRV.Records)
+			set(&s.Service.Records, e.Spec.SRV.Records)
 		}
 
 		if len(e.Spec.DNSNames) == 0 {
@@ -155,12 +159,12 @@ func (s *Entry) DeepCopyObject() runtime.Object {
 		Name:      s.Name,
 		Namespace: s.Namespace,
 	}
-	copy(s1.Index, s.Index)
-	copy(s1.Hosts, s.Hosts)
-	copy(s1.Text, s.Text)
+	set(&s1.Index, s.Index)
+	set(&s1.Hosts, s.Hosts)
+	set(&s1.Text, s.Text)
 	if s.Service.Service != "" {
 		s1.Service.Service = s.Service.Service
-		copy(s1.Service.Records, s.Service.Records)
+		set(&s1.Service.Records, s.Service.Records)
 	}
 	return s1
 }
@@ -209,7 +213,7 @@ func (e *Entry) Equal(b *Entry) bool {
 	return true
 }
 
-func (s *Entry) Services(t uint16, p string) []msg.Service {
+func (s *Entry) Services(t uint16, p string, defttl uint32) []msg.Service {
 	if !s.Valid {
 		return nil
 	}
@@ -221,16 +225,18 @@ func (s *Entry) Services(t uint16, p string) []msg.Service {
 				Host: h,
 				Port: -1,
 				Mail: false,
-				TTL:  s.Ttl,
+				TTL:  DefTTL(s.Ttl, defttl),
+				Key:  coredns,
 			})
 		}
 	case dns.TypeTXT:
 		for _, h := range s.Text {
 			result = append(result, msg.Service{
-				Host: h,
+				Text: h,
 				Port: -1,
 				Mail: false,
-				TTL:  s.Ttl,
+				TTL:  DefTTL(s.Ttl, defttl),
+				Key:  coredns,
 			})
 		}
 	case dns.TypeSRV:
@@ -243,7 +249,8 @@ func (s *Entry) Services(t uint16, p string) []msg.Service {
 						Priority: h.Priority,
 						Weight:   h.Weight,
 						Mail:     false,
-						TTL:      s.Ttl,
+						TTL:      DefTTL(s.Ttl, defttl),
+						Key:      coredns,
 					})
 				}
 			}
@@ -269,3 +276,31 @@ func (s *Entry) GetResourceVersion() string { return s.Version }
 
 // SetResourceVersion implements the metav1.Object interface.
 func (s *Entry) SetResourceVersion(version string) {}
+
+func set(dst interface{}, src interface{}) {
+	dv := reflect.ValueOf(dst)
+	if dv.Kind() != reflect.Ptr || dv.Type().Elem().Kind() != reflect.Slice {
+		panic(fmt.Sprintf("invalid slice target %T", dst))
+	}
+	sv := reflect.ValueOf(src)
+	for sv.Kind() == reflect.Ptr {
+		sv = sv.Elem()
+	}
+	if sv.Kind() != reflect.Slice && sv.Kind() != reflect.Array {
+		panic(fmt.Sprintf("invalid slice source %T", src))
+	}
+	slice := reflect.New(reflect.SliceOf(dv.Type().Elem().Elem())).Elem()
+	for i := 0; i < sv.Len(); i++ {
+		slice = reflect.Append(slice, sv.Index(i))
+	}
+	dv.Elem().Set(slice)
+}
+
+func DefTTL(ttl, def uint32) uint32 {
+	if ttl == 0 {
+		return def
+	}
+	return ttl
+}
+
+const coredns = "c" // used as a fake key prefix in msg.Service

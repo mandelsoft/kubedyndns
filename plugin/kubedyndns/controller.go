@@ -28,6 +28,7 @@ import (
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 
+	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 
@@ -47,9 +48,8 @@ const (
 
 type Controller interface {
 	EntryList() []*objects.Entry
-	EntryIndex(string) []*objects.Entry
-
-	GetNamespaceByName(string) (*corev1.Namespace, error)
+	EntryDNSIndex(string) []*objects.Entry
+	EntryIPIndex(idx string) (entries []*objects.Entry)
 
 	Run()
 	HasSynced() bool
@@ -72,7 +72,6 @@ type controller struct {
 	namespaceSelector labels.Selector
 
 	entryController cache.Controller
-	nsController    cache.Controller
 
 	entryLister cache.Indexer
 	nsLister    cache.Store
@@ -114,20 +113,11 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 			ListFunc:  entryListFunc(ctx, cntr.client, corev1.NamespaceAll, cntr.selector),
 			WatchFunc: entryWatchFunc(ctx, cntr.client, corev1.NamespaceAll, cntr.selector),
 		},
-		&corev1.Service{},
+		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
-		cache.Indexers{DNSIndex: entryDNSIndexFunc},
+		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
 		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client), nil),
 	)
-
-	cntr.nsLister, cntr.nsController = cache.NewInformer(
-		&cache.ListWatch{
-			ListFunc:  namespaceListFunc(ctx, cntr.kubeclient, cntr.namespaceSelector),
-			WatchFunc: namespaceWatchFunc(ctx, cntr.kubeclient, cntr.namespaceSelector),
-		},
-		&corev1.Namespace{},
-		defaultResyncPeriod,
-		cache.ResourceEventHandlerFuncs{})
 
 	return &cntr
 }
@@ -138,6 +128,14 @@ func entryDNSIndexFunc(obj interface{}) ([]string, error) {
 		return nil, errObj
 	}
 	return e.Index, nil
+}
+
+func entryIPIndexFunc(obj interface{}) ([]string, error) {
+	e, ok := obj.(*objects.Entry)
+	if !ok {
+		return nil, errObj
+	}
+	return e.Hosts, nil
 }
 
 func entryListFunc(ctx context.Context, c clientapi.Interface, ns string, s labels.Selector) func(meta.ListOptions) (runtime.Object, error) {
@@ -195,15 +193,13 @@ func (cntr *controller) Stop() error {
 // Run starts the controller.
 func (cntr *controller) Run() {
 	go cntr.entryController.Run(cntr.stopCh)
-	go cntr.nsController.Run(cntr.stopCh)
 	<-cntr.stopCh
 }
 
 // HasSynced calls on all controllers.
 func (cntr *controller) HasSynced() bool {
 	a := cntr.entryController.HasSynced()
-	b := cntr.nsController.HasSynced()
-	return a && b
+	return a
 }
 
 func (cntr *controller) EntryList() (entries []*objects.Entry) {
@@ -218,8 +214,23 @@ func (cntr *controller) EntryList() (entries []*objects.Entry) {
 	return entries
 }
 
-func (cntr *controller) EntryIndex(idx string) (entries []*objects.Entry) {
+func (cntr *controller) EntryDNSIndex(idx string) (entries []*objects.Entry) {
 	os, err := cntr.entryLister.ByIndex(DNSIndex, idx)
+	if err != nil {
+		return nil
+	}
+	for _, o := range os {
+		s, ok := o.(*objects.Entry)
+		if !ok {
+			continue
+		}
+		entries = append(entries, s)
+	}
+	return entries
+}
+
+func (cntr *controller) EntryIPIndex(idx string) (entries []*objects.Entry) {
+	os, err := cntr.entryLister.ByIndex(IPIndex, idx)
 	if err != nil {
 		return nil
 	}

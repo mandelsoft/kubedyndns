@@ -1,0 +1,20 @@
+kind: CoreDNSEntry
+apiVersion: coredns.mandelsoft.org/v1alpha1
+metadata:
+  name: test
+  namespace: default
+spec:
+  dnsNames:
+  - test.test
+  A:
+  - 8.8.8.8
+  TXT:
+  - this is a test server
+  SRV:
+    service: dns
+    records:
+      - port: 53
+        protocol: UDP
+        priority: 10
+        weight: 100
+        host: dns.google

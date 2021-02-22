@@ -20,7 +20,7 @@ type CoreDNSEntryList struct {
 
 // +kubebuilder:storageversion
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=coredns
+// +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=corednsentry
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name=DNSNames,JSONPath=".spec.dnsNames",type=string
 // +kubebuilder:printcolumn:name=A,JSONPath=".spec.A",type=string
@@ -67,17 +67,26 @@ type ServiceSpec struct {
 
 // SRVRecord is a service record
 type SRVRecord struct {
+	// Protocol of the service record (UDP/TCP)
 	Protocol string `json:"protocol"`
-	Priority int    `json:"priority"`
-	Weight   int    `json:"weight"`
-	Port     int    `json:"port"`
-	Host     string `json:"host"`
+	// Priority of the service record
+	// +optional
+	Priority int `json:"priority,omitempty"`
+	// Weight of the service record
+	// +optional
+	Weight int `json:"weight,omitempty"`
+	// Port of the service record
+	Port int `json:"port"`
+	// Target of the service record
+	Host string `json:"host"`
 }
 
 // CoreDNSStatus describes the statuso an entry
 type CoreDNSStatus struct {
+	// State of the dns entry object
 	// +optional
 	State string `json:"state,omitempty"`
+	// Error message in case of an invalid entry
 	// +optional
 	Message string `json:"message,omitempty"`
 }
