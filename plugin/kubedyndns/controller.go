@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
+	"github.com/miekg/dns"
 
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
@@ -218,6 +219,14 @@ func (cntr *controller) EntryDNSIndex(idx string) (entries []*objects.Entry) {
 	os, err := cntr.entryLister.ByIndex(DNSIndex, idx)
 	if err != nil {
 		return nil
+	}
+	if len(os) == 0 {
+		fields := dns.Split(idx)
+		idx = "*." + idx[fields[1]:]
+		os, err = cntr.entryLister.ByIndex(DNSIndex, idx)
+		if err != nil {
+			return nil
+		}
 	}
 	for _, o := range os {
 		s, ok := o.(*objects.Entry)
