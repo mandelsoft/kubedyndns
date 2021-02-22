@@ -16,12 +16,7 @@
  *  limitations under the License.
  */
 
-package v1alpha1
+package kubedyndns
 
-import (
-	"k8s.io/apimachinery/pkg/runtime"
-)
-
-func addDefaultingFuncs(scheme *runtime.Scheme) error {
-	return RegisterDefaults(scheme)
-}
+// Ready implements the ready.Readiness interface.
+func (k *KubeDynDNS) Ready() bool { return k.APIConn.HasSynced() }
