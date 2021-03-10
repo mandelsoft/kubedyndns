@@ -100,9 +100,7 @@ Handle all queries in the `my.domain` zone. Connect to Kubernetes in-cluster. Al
 
 ~~~ txt
 .:1053 {
-    kubedyndns my.domain in-addr.arpa {
-        pods verified
-    }
+    kubedyndns my.domain in-addr.arpa
 }
 ~~~
 

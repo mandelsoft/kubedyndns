@@ -40,15 +40,18 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/openstack" // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
+
+	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 )
 
 const pluginName = "kubedyndns"
 
 var log = clog.NewWithPlugin(pluginName)
 
-func init() { plugin.Register(pluginName, setup) }
+func init() { objects.Log = log; plugin.Register(pluginName, setup) }
 
 func setup(c *caddy.Controller) error {
+	log.Infof("setup kubedyndns plugin")
 	klog.SetOutput(os.Stdout)
 
 	k, err := parse(c)
@@ -227,15 +230,20 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 			k8s.ttl = uint32(t)
 		case "kubeconfig":
 			args := c.RemainingArgs()
-			if len(args) == 2 {
-				config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-					&clientcmd.ClientConfigLoadingRules{ExplicitPath: args[0]},
-					&clientcmd.ConfigOverrides{CurrentContext: args[1]},
-				)
-				k8s.ClientConfig = config
-				continue
+			override := &clientcmd.ConfigOverrides{}
+			switch len(args) {
+			case 2:
+				override.CurrentContext = args[1]
+			case 1:
+			default:
+				return nil, c.ArgErr()
 			}
-			return nil, c.ArgErr()
+			config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+				&clientcmd.ClientConfigLoadingRules{ExplicitPath: args[0]},
+				override,
+			)
+			k8s.ClientConfig = config
+			continue
 		default:
 			return nil, c.Errf("unknown property '%s'", c.Val())
 		}

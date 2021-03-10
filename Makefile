@@ -107,6 +107,11 @@ docker-login:
 images-dev:
 	for name in $(NAMES); do \
 	docker build -t $(IMAGE_PREFIX)/$$name:$(VERSION)-dev-$(COMMIT) -t $(IMAGE_PREFIX)/$$name:latest -f Dockerfile -m 6g --build-arg TARGETS=$$name-dev --build-arg NAME=$$name --target image .; \
+	done
+
+.PHONY: images-dev-push
+images-dev-push: images-dev
+	for name in $(NAMES); do \
 	docker push $(IMAGE_PREFIX)/$$name:latest; \
 	done
 

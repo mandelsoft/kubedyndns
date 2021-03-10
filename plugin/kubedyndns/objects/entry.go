@@ -26,6 +26,7 @@ import (
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/etcd/msg"
+	clog "github.com/coredns/coredns/plugin/pkg/log"
 	"github.com/miekg/dns"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,6 +37,8 @@ import (
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 )
+
+var Log clog.P
 
 // Entry is a stripped down api.CoreDNSEntry with only the items we need for CoreDNS.
 type Entry struct {
@@ -134,15 +137,20 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 			if e.Status.Message != err.Error() || e.Status.State != "Invalid" {
 				e.Status.Message = err.Error()
 				e.Status.State = "Invalid"
-				client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+				_, err = client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+			} else {
+				err=nil
 			}
 		} else {
 			s.Valid = true
 			if e.Status.Message != "" || e.Status.State != "Ok" {
 				e.Status.Message = ""
 				e.Status.State = "Ok"
-				client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+				_, err =client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
 			}
+		}
+		if err!=nil {
+			Log.Errorf("error updating entry status %s/%s: %s", e.Namespace, e.Name, err)
 		}
 		*e = api.CoreDNSEntry{}
 

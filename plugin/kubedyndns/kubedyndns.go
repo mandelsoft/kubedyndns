@@ -135,11 +135,12 @@ func (k *KubeDynDNS) getClientConfig() (*rest.Config, error) {
 
 	// Connect to API from in cluster
 	if len(k.APIServerList) == 0 {
+		log.Infof("using in-cluster config")
 		cc, err := rest.InClusterConfig()
 		if err != nil {
 			return nil, err
 		}
-		cc.ContentType = "application/vnd.kubernetes.protobuf"
+		//cc.ContentType = "application/vnd.kubernetes.protobuf"
 		return cc, err
 	}
 
