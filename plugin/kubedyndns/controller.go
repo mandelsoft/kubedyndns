@@ -22,11 +22,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
+	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/utils"
 	"github.com/miekg/dns"
 
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
@@ -45,12 +47,19 @@ import (
 const (
 	DNSIndex = "dns"
 	IPIndex  = "ip"
+
+	ZoneIndex       = "zone"
+	ZoneParentIndex = "parent"
 )
 
 type Controller interface {
 	EntryList() []*objects.Entry
 	EntryDNSIndex(string) []*objects.Entry
-	EntryIPIndex(idx string) (entries []*objects.Entry)
+	EntryIPIndex(idx string) []*objects.Entry
+
+	GetZone(name *cache.ObjectName) *objects.Zone
+	ZoneDomainIndex(idx string) []*objects.Zone
+	ZoneParentIndex(idx string) []*objects.Zone
 
 	Run()
 	HasSynced() bool
@@ -69,12 +78,13 @@ type controller struct {
 	kubeclient kubernetes.Interface
 	client     clientapi.Interface
 
-	selector          labels.Selector
-	namespaceSelector labels.Selector
+	selector labels.Selector
 
 	entryController cache.Controller
+	zoneController  cache.Controller
 
 	entryLister cache.Indexer
+	zoneLister  cache.Indexer
 	nsLister    cache.Store
 
 	// stopLock is used to enforce only a single call to Stop is active.
@@ -85,50 +95,82 @@ type controller struct {
 	stopCh   chan struct{}
 
 	zones []string
+	*controlOpts
 }
 
 type controlOpts struct {
-	// Label handling.
-	labelSelector          *meta.LabelSelector
-	selector               labels.Selector
-	namespaceLabelSelector *meta.LabelSelector
-	namespaceSelector      labels.Selector
+	zoneObject string
+	zones      []string
+	filtered   bool
+	namespaces map[string]struct{}
 
-	zones            []string
-	endpointNameMode bool
+	zoneRef *cache.ObjectName
+}
+
+type ListFuncFactory = func(c clientapi.Interface, ns string, s labels.Selector) func(context.Context, meta.ListOptions) (runtime.Object, error)
+type WatchFuncFactory = func(c clientapi.Interface, ns string, s labels.Selector) func(context.Context, meta.ListOptions) (watch.Interface, error)
+
+func filterListWatch(
+	c clientapi.Interface,
+	l ListFuncFactory,
+	w WatchFuncFactory,
+	s labels.Selector,
+	namespaces ...string) utils.ListWatch {
+
+	var f func(obj runtime.Object) bool
+	if len(namespaces) > 1 {
+		f = func(obj runtime.Object) bool {
+			return slices.Contains(namespaces, obj.(meta.Object).GetNamespace())
+		}
+	}
+	ns := corev1.NamespaceAll
+	if len(namespaces) == 1 {
+		ns = namespaces[0]
+	}
+
+	return utils.NewFilteringListWatch(&cache.ListWatch{
+		ListWithContextFunc:  l(c, ns, s),
+		WatchFuncWithContext: w(c, ns, s),
+	}, f)
 }
 
 // newController creates a controller for CoreDNS.
 func newController(ctx context.Context, kubeClient kubernetes.Interface, client clientapi.Interface, opts controlOpts) *controller {
 	cntr := controller{
-		kubeclient:        kubeClient,
-		client:            client,
-		selector:          opts.selector,
-		namespaceSelector: opts.namespaceSelector,
-		stopCh:            make(chan struct{}),
-		zones:             opts.zones,
+		kubeclient:  kubeClient,
+		client:      client,
+		stopCh:      make(chan struct{}),
+		controlOpts: &opts,
 	}
 
 	cntr.entryLister, cntr.entryController = object.NewIndexerInformer(
-		&cache.ListWatch{
-			ListFunc:  entryListFunc(ctx, cntr.client, corev1.NamespaceAll, cntr.selector),
-			WatchFunc: entryWatchFunc(ctx, cntr.client, corev1.NamespaceAll, cntr.selector),
-		},
+		filterListWatch(cntr.client, entryListFunc, entryWatchFunc, cntr.selector, corev1.NamespaceAll),
 		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
-		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client), nil),
+		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client, opts.filtered, opts.zones...), nil),
+	)
+
+	cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
+		filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, corev1.NamespaceAll),
+		&api.HostedZone{},
+		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
+		cache.Indexers{ZoneIndex: zoneIndexFunc, ZoneParentIndex: zoneParentIndexFunc},
+		object.DefaultProcessor(objects.ToZone(ctx, cntr.client), nil),
 	)
 
 	return &cntr
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 func entryDNSIndexFunc(obj interface{}) ([]string, error) {
 	e, ok := obj.(*objects.Entry)
 	if !ok {
 		return nil, errObj
 	}
-	return e.Index, nil
+	log.Infof("found entry %s/%s -> %v\n", e.Name, e.Namespace, e.DNSNames)
+	return e.DNSNames, nil
 }
 
 func entryIPIndexFunc(obj interface{}) ([]string, error) {
@@ -136,11 +178,15 @@ func entryIPIndexFunc(obj interface{}) ([]string, error) {
 	if !ok {
 		return nil, errObj
 	}
-	return e.Hosts, nil
+	hosts := append(e.A, e.AAAA...)
+	if e.CNAME != "" {
+		hosts = append(hosts, e.CNAME)
+	}
+	return hosts, nil
 }
 
-func entryListFunc(ctx context.Context, c clientapi.Interface, ns string, s labels.Selector) func(meta.ListOptions) (runtime.Object, error) {
-	return func(opts meta.ListOptions) (runtime.Object, error) {
+func entryListFunc(c clientapi.Interface, ns string, s labels.Selector) func(context.Context, meta.ListOptions) (runtime.Object, error) {
+	return func(ctx context.Context, opts meta.ListOptions) (runtime.Object, error) {
 		if s != nil {
 			opts.LabelSelector = s.String()
 		}
@@ -148,17 +194,8 @@ func entryListFunc(ctx context.Context, c clientapi.Interface, ns string, s labe
 	}
 }
 
-func namespaceListFunc(ctx context.Context, c kubernetes.Interface, s labels.Selector) func(meta.ListOptions) (runtime.Object, error) {
-	return func(opts meta.ListOptions) (runtime.Object, error) {
-		if s != nil {
-			opts.LabelSelector = s.String()
-		}
-		return c.CoreV1().Namespaces().List(ctx, opts)
-	}
-}
-
-func entryWatchFunc(ctx context.Context, c clientapi.Interface, ns string, s labels.Selector) func(options meta.ListOptions) (watch.Interface, error) {
-	return func(options meta.ListOptions) (watch.Interface, error) {
+func entryWatchFunc(c clientapi.Interface, ns string, s labels.Selector) func(context.Context, meta.ListOptions) (watch.Interface, error) {
+	return func(ctx context.Context, options meta.ListOptions) (watch.Interface, error) {
 		if s != nil {
 			options.LabelSelector = s.String()
 		}
@@ -166,8 +203,58 @@ func entryWatchFunc(ctx context.Context, c clientapi.Interface, ns string, s lab
 	}
 }
 
-func namespaceWatchFunc(ctx context.Context, c kubernetes.Interface, s labels.Selector) func(options meta.ListOptions) (watch.Interface, error) {
-	return func(options meta.ListOptions) (watch.Interface, error) {
+////////////////////////////////////////////////////////////////////////////////
+
+func zoneIndexFunc(obj interface{}) ([]string, error) {
+	e, ok := obj.(*objects.Zone)
+	if !ok {
+		return nil, errObj
+	}
+	d := dns.Fqdn(e.DomainName)
+	log.Infof("found zone %s/%s -> %v\n", e.Name, e.Namespace, d)
+	return []string{d}, nil
+}
+
+func zoneParentIndexFunc(obj interface{}) ([]string, error) {
+	e, ok := obj.(*objects.Zone)
+	if !ok {
+		return nil, errObj
+	}
+	log.Infof("found zone parent %s/%s -> %s\n", e.Name, e.Namespace, e.ParentRef)
+	return []string{e.Namespace + "/" + e.ParentRef}, nil
+}
+
+func zoneListFunc(c clientapi.Interface, ns string, s labels.Selector) func(context.Context, meta.ListOptions) (runtime.Object, error) {
+	return func(ctx context.Context, opts meta.ListOptions) (runtime.Object, error) {
+		if s != nil {
+			opts.LabelSelector = s.String()
+		}
+		return c.CorednsV1alpha1().HostedZones(ns).List(ctx, opts)
+	}
+}
+
+func zoneWatchFunc(c clientapi.Interface, ns string, s labels.Selector) func(context.Context, meta.ListOptions) (watch.Interface, error) {
+	return func(ctx context.Context, options meta.ListOptions) (watch.Interface, error) {
+		if s != nil {
+			options.LabelSelector = s.String()
+		}
+		return c.CorednsV1alpha1().HostedZones(ns).Watch(ctx, options)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func namespaceListFunc(c kubernetes.Interface, s labels.Selector) func(context.Context, meta.ListOptions) (runtime.Object, error) {
+	return func(ctx context.Context, opts meta.ListOptions) (runtime.Object, error) {
+		if s != nil {
+			opts.LabelSelector = s.String()
+		}
+		return c.CoreV1().Namespaces().List(ctx, opts)
+	}
+}
+
+func namespaceWatchFunc(c kubernetes.Interface, s labels.Selector) func(context.Context, meta.ListOptions) (watch.Interface, error) {
+	return func(ctx context.Context, options meta.ListOptions) (watch.Interface, error) {
 		if s != nil {
 			options.LabelSelector = s.String()
 		}
@@ -194,12 +281,15 @@ func (cntr *controller) Stop() error {
 // Run starts the controller.
 func (cntr *controller) Run() {
 	go cntr.entryController.Run(cntr.stopCh)
+	if cntr.zoneRef != nil {
+		go cntr.zoneController.Run(cntr.stopCh)
+	}
 	<-cntr.stopCh
 }
 
 // HasSynced calls on all controllers.
 func (cntr *controller) HasSynced() bool {
-	a := cntr.entryController.HasSynced()
+	a := cntr.entryController.HasSynced() && (cntr.zoneRef == nil || cntr.zoneController.HasSynced())
 	return a
 }
 
@@ -217,40 +307,36 @@ func (cntr *controller) EntryList() (entries []*objects.Entry) {
 
 func (cntr *controller) EntryDNSIndex(idx string) (entries []*objects.Entry) {
 	os, err := cntr.entryLister.ByIndex(DNSIndex, idx)
-	if err != nil {
-		return nil
-	}
-	if len(os) == 0 {
+	if err == nil && len(os) == 0 {
 		fields := dns.Split(idx)
 		idx = "*." + idx[fields[1]:]
 		os, err = cntr.entryLister.ByIndex(DNSIndex, idx)
-		if err != nil {
-			return nil
-		}
 	}
-	for _, o := range os {
-		s, ok := o.(*objects.Entry)
-		if !ok {
-			continue
-		}
-		entries = append(entries, s)
-	}
-	return entries
+	return utils.ConvertSlice[*objects.Entry](os, err)
 }
 
 func (cntr *controller) EntryIPIndex(idx string) (entries []*objects.Entry) {
-	os, err := cntr.entryLister.ByIndex(IPIndex, idx)
-	if err != nil {
+	return utils.ConvertSlice[*objects.Entry](cntr.entryLister.ByIndex(IPIndex, idx))
+}
+
+func (cntr *controller) GetZone(name *cache.ObjectName) *objects.Zone {
+	if name == nil {
 		return nil
 	}
-	for _, o := range os {
-		s, ok := o.(*objects.Entry)
-		if !ok {
-			continue
-		}
-		entries = append(entries, s)
+	e, _, _ := cntr.zoneLister.GetByKey(name.String())
+	if e != nil {
+		return e.(*objects.Zone)
 	}
-	return entries
+	return nil
+}
+
+func (cntr *controller) ZoneDomainIndex(idx string) (entries []*objects.Zone) {
+	return utils.ConvertSlice[*objects.Zone](cntr.zoneLister.ByIndex(ZoneIndex, idx))
+}
+
+func (cntr *controller) ZoneParentIndex(idx string) (entries []*objects.Zone) {
+	return utils.ConvertSlice[*objects.Zone](cntr.zoneLister.ByIndex(ZoneParentIndex, idx))
+
 }
 
 // GetNamespaceByName returns the namespace by name. If nothing is found an error is returned.
@@ -285,6 +371,10 @@ func (cntr *controller) detectChanges(oldObj, newObj interface{}) {
 	switch ob := obj.(type) {
 	case *objects.Entry:
 		if !(oldObj.(*objects.Entry).Equal(newObj.(*objects.Entry))) {
+			cntr.updateModifed()
+		}
+	case *objects.Zone:
+		if !(oldObj.(*objects.Zone).Equal(newObj.(*objects.Zone))) {
 			cntr.updateModifed()
 		}
 	default:

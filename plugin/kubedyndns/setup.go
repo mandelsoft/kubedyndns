@@ -33,11 +33,12 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/dnsutil"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
-
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"       // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
-	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"      // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
-	_ "k8s.io/client-go/plugin/pkg/client/auth/openstack" // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"  // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
+	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc" // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
+	"k8s.io/client-go/tools/cache"
+
+	// _ "k8s.io/client-go/plugin/pkg/client/auth/openstack" // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 
@@ -54,26 +55,44 @@ func setup(c *caddy.Controller) error {
 	log.Infof("setup kubedyndns plugin")
 	klog.SetOutput(os.Stdout)
 
-	k, err := parse(c)
+	ks, err := parse(c)
 	if err != nil {
 		return plugin.Error(pluginName, err)
 	}
 
-	err = k.InitKubeCache(context.Background())
+	// link plugins into processing chain
+	for i := range ks {
+		k := ks[i]
+
+		if i == len(ks)-1 {
+			// last forward: point next to next plugin
+			dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
+				k.Next = next
+				return k
+			})
+		} else {
+			// middle forward: point next to next forward
+			nextForward := ks[i+1]
+			dnsserver.GetConfig(c).AddPlugin(func(plugin.Handler) plugin.Handler {
+				k.Next = nextForward
+				return k
+			})
+		}
+	}
+
+	err = ks[0].InitKubeCache(context.Background())
 	if err != nil {
 		return plugin.Error(pluginName, err)
 	}
 
-	k.RegisterKubeCache(c)
-
-	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
-		k.Next = next
-		return k
-	})
+	ks[0].RegisterKubeCache(c)
 
 	// get locally bound addresses
 	c.OnStartup(func() error {
-		k.localIPs = boundIPs(c)
+		localIPs := boundIPs(c)
+		for i := range ks {
+			ks[i].localIPs = localIPs
+		}
 		return nil
 	})
 
@@ -104,29 +123,28 @@ func (k *KubeDynDNS) RegisterKubeCache(c *caddy.Controller) {
 	})
 }
 
-func parse(c *caddy.Controller) (*KubeDynDNS, error) {
+func parse(c *caddy.Controller) ([]*KubeDynDNS, error) {
 	var (
-		k8s *KubeDynDNS
-		err error
+		kc *K8SConfig
+		r  []*KubeDynDNS
 	)
 
 	i := 0
 	for c.Next() {
-		if i > 0 {
-			return nil, plugin.ErrOnce
-		}
 		i++
 
-		k8s, err = ParseStanza(c)
+		k8s, err := ParseStanza(c, kc)
 		if err != nil {
-			return k8s, err
+			return nil, err
 		}
+		kc = k8s.assureK8SConfig()
+		r = append(r, k8s)
 	}
-	return k8s, nil
+	return r, nil
 }
 
 // ParseStanza parses a kubedyndns stanza
-func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
+func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 
 	k8s := New([]string{""})
 
@@ -146,11 +164,13 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 
 	k8s.primaryZoneIndex = -1
 	for i, z := range k8s.Zones {
-		if dnsutil.IsReverse(z) > 0 {
+		if dnsutil.IsReverse("."+z) > 0 {
 			continue
 		}
-		k8s.primaryZoneIndex = i
-		break
+		k8s.ServedZones = append(k8s.ServedZones, z)
+		if k8s.primaryZoneIndex < 0 {
+			k8s.primaryZoneIndex = i
+		}
 	}
 
 	if k8s.primaryZoneIndex == -1 {
@@ -161,11 +181,36 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 
 	for c.NextBlock() {
 		switch c.Val() {
+		case "mode":
+			args := c.RemainingArgs()
+			if len(args) > 0 {
+				if len(args) > 1 {
+					return nil, fmt.Errorf("Multiple modes not possible")
+				}
+				switch args[0] {
+				case MODE_FILTER, MODE_SUBDOMAINS, MODE_PRIMARY:
+					k8s.Mode = args[0]
+				default:
+					return nil, fmt.Errorf("Invalid mode %q, use %s, %s or %s", args[0], MODE_FILTER, MODE_SUBDOMAINS, MODE_PRIMARY)
+				}
+				continue
+			}
+			return nil, c.ArgErr()
+		case "zoneobject":
+			args := c.RemainingArgs()
+			if len(args) > 0 {
+				if len(args) != 1 {
+					return nil, c.Errf("Zone Object requires name")
+				}
+				k8s.zoneObject = args[0]
+				continue
+			}
+			return nil, c.ArgErr()
 		case "namespaces":
 			args := c.RemainingArgs()
 			if len(args) > 0 {
 				for _, a := range args {
-					k8s.Namespaces[a] = struct{}{}
+					k8s.namespaces[a] = struct{}{}
 				}
 				continue
 			}
@@ -175,9 +220,9 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 			if len(args) > 0 {
 				// Multiple endpoints are deprecated but still could be specified,
 				// only the first one be used, though
-				k8s.APIServerList = args
+				k8s.assureK8SConfig().APIServerList = args
 				if len(args) > 1 {
-					return nil, fmt.Errorf("Multiple endpoints not possible")
+					return nil, c.Errf("Multiple endpoints not possible")
 				}
 				continue
 			}
@@ -185,7 +230,8 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 		case "tls": // cert key cacertfile
 			args := c.RemainingArgs()
 			if len(args) == 3 {
-				k8s.APIClientCert, k8s.APIClientKey, k8s.APICertAuth = args[0], args[1], args[2]
+				kc := k8s.assureK8SConfig()
+				kc.APIClientCert, kc.APIClientKey, kc.APICertAuth = args[0], args[1], args[2]
 				continue
 			}
 			return nil, c.ArgErr()
@@ -195,21 +241,9 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 				labelSelectorString := strings.Join(args, " ")
 				ls, err := meta.ParseToLabelSelector(labelSelectorString)
 				if err != nil {
-					return nil, fmt.Errorf("unable to parse label selector value: '%v': %v", labelSelectorString, err)
+					return nil, c.Errf("unable to parse label selector value: '%v': %v", labelSelectorString, err)
 				}
-				k8s.opts.labelSelector = ls
-				continue
-			}
-			return nil, c.ArgErr()
-		case "namespace_labels":
-			args := c.RemainingArgs()
-			if len(args) > 0 {
-				namespaceLabelSelectorString := strings.Join(args, " ")
-				nls, err := meta.ParseToLabelSelector(namespaceLabelSelectorString)
-				if err != nil {
-					return nil, fmt.Errorf("unable to parse namespace_label selector value: '%v': %v", namespaceLabelSelectorString, err)
-				}
-				k8s.opts.namespaceLabelSelector = nls
+				k8s.assureK8SConfig().labelSelector = ls
 				continue
 			}
 			return nil, c.ArgErr()
@@ -242,16 +276,46 @@ func ParseStanza(c *caddy.Controller) (*KubeDynDNS, error) {
 				&clientcmd.ClientConfigLoadingRules{ExplicitPath: args[0]},
 				override,
 			)
-			k8s.ClientConfig = config
+			k8s.assureK8SConfig().ClientConfig = config
 			continue
 		default:
 			return nil, c.Errf("unknown property '%s'", c.Val())
 		}
 	}
 
-	if len(k8s.Namespaces) != 0 && k8s.opts.namespaceLabelSelector != nil {
-		return nil, c.Errf("namespaces and namespace_labels cannot both be set")
+	if k8s.Mode == MODE_PRIMARY {
+		if k8s.zoneObject == "" {
+			return nil, c.Errf("zoneObject required for mode %q", k8s.Mode)
+		}
+
+		if len(k8s.namespaces) != 1 {
+			return nil, c.Errf("one namespace required for zoneObject for mode %q", k8s.Mode)
+		}
+
+		ns := ""
+		for n := range k8s.namespaces {
+			ns = n
+		}
+
+		k8s.zoneRef = &cache.ObjectName{Name: k8s.zoneObject, Namespace: ns}
+		k8s.k8s.Namespaces[k8s.zoneRef.Namespace] = struct{}{}
+
+	} else {
+		if k8s.zoneObject != "" {
+			return nil, c.Errf("zoneObject requires mode %q", MODE_PRIMARY)
+		}
 	}
 
+	if kc != nil && k8s.k8s != nil {
+		return nil, c.Errf("kubernetes config is possible only once at first instance in server block")
+	}
+
+	k8s.assureK8SConfig().Namespaces[k8s.zoneRef.Namespace] = struct{}{}
+
+	if k8s.Mode != MODE_FILTER {
+		if len(k8s.ServedZones) != 1 {
+			return nil, c.Errf("Mode %s requires one served zone as base domain", k8s.Mode)
+		}
+	}
 	return k8s, nil
 }

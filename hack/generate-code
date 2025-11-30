@@ -4,18 +4,74 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -x
-rm -f $GOPATH/bin/*-gen
+set -o errexit
+set -o nounset
+set -o pipefail
 
-PROJECT_ROOT=$(dirname $0)/..
-DIR=$(pwd)
-BASE="$1"
-SPEC="$2"
+SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+MODULE="$(go list -m)"
 
-bash "${PROJECT_ROOT}"/vendor/k8s.io/code-generator/generate-internal-groups.sh \
+# find the code-generator package in the module cache
+CODEGEN_PKG="$(go list -m -f {{.Dir}} k8s.io/code-generator)"
+
+echo "using $CODEGEN_PKG"
+echo "module $MODULE"
+echo "path $(pwd)"
+
+# Source the codegen script
+source "${CODEGEN_PKG}/kube_codegen.sh"
+
+# Generate helpers (deepcopy, conversion, defaults, validation)
+kube::codegen::gen_helpers \
+  --boilerplate "$SCRIPT_ROOT/LICENSE_BOILERPLATE.txt" \
+  --extra-peer-dir "$(pwd)" \
+  "$(pwd)"
+
+kube::codegen::gen_register \
+  --boilerplate "$SCRIPT_ROOT/LICENSE_BOILERPLATE.txt" \
+  "$(pwd)"
+
+# Generate client, listers, informers
+kube::codegen::gen_client \
+  --boilerplate "$SCRIPT_ROOT/LICENSE_BOILERPLATE.txt" \
+  --with-watch \
+  --output-dir "${SCRIPT_ROOT}/../client" \
+  --output-pkg "${MODULE}/client" \
+  "$(pwd)"
+
+
+exit 0
+
+###################################
+#bash "$CODEGEN_PKG"/generate-internal-groups.sh \
+bash "$CODEGEN_PKG"/kube_codegen.sh\
   deepcopy,client,informer,lister,defaulter \
   $BASE/client \
   $BASE/apis \
   $BASE/apis \
   "$SPEC" \
   --go-header-file "$(dirname $0)/LICENSE_BOILERPLATE.txt"
+
+
+#!/usr/bin/env bash
+set -o errexit
+set -o nounset
+set -o pipefail
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODULE="$(go list -m)"
+
+CODEGEN_PKG="$(go list -m -f '{{ .Dir }}' k8s.io/code-generator)"
+source "${CODEGEN_PKG}/kube_codegen.sh"
+
+# Generate helper code
+kube::codegen::gen_helpers \
+  --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
+  "${MODULE}/pkg/apis"
+
+
+# Generate scheme registration (AddToScheme, etc.)
+kube::codegen::gen_register \
+  --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
+  "${MODULE}/pkg/apis"
+

@@ -30,7 +30,11 @@ type FakeCorednsV1alpha1 struct {
 }
 
 func (c *FakeCorednsV1alpha1) CoreDNSEntries(namespace string) v1alpha1.CoreDNSEntryInterface {
-	return &FakeCoreDNSEntries{c, namespace}
+	return newFakeCoreDNSEntries(c, namespace)
+}
+
+func (c *FakeCorednsV1alpha1) HostedZones(namespace string) v1alpha1.HostedZoneInterface {
+	return newFakeHostedZones(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

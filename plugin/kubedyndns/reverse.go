@@ -48,8 +48,8 @@ func (k *KubeDynDNS) Reverse(ctx context.Context, state request.Request, exact b
 func (k *KubeDynDNS) serviceRecordForIP(ip, name string) []msg.Service {
 	// First check services with cluster ips
 	for _, service := range k.APIConn.EntryIPIndex(ip) {
-		if len(service.Index) > 0 {
-			domain := service.Index[0]
+		if len(service.DNSNames) > 0 {
+			domain := service.DNSNames[0]
 			return []msg.Service{{Host: domain, TTL: k.ttl}}
 		}
 	}

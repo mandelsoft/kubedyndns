@@ -32,7 +32,7 @@ var directives = []string{
 }
 
 func init() {
-	dnsserver.Directives = append(directives, dnsserver.Directives...)
+	dnsserver.Directives = append(dnsserver.Directives, directives...)
 }
 
 func main() {

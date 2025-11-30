@@ -20,3 +20,5 @@
 package v1alpha1
 
 type CoreDNSEntryExpansion interface{}
+
+type HostedZoneExpansion interface{}

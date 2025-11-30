@@ -23,17 +23,17 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/etcd/msg"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
+	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
+	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 	"github.com/miekg/dns"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
-
-	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
-	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 )
@@ -45,12 +45,18 @@ type Entry struct {
 	Version   string
 	Name      string
 	Namespace string
+	ZoneRef   string
 	Valid     bool
 	Ttl       uint32
-	Index     []string
-	Hosts     []string
-	Text      []string
-	Service   api.ServiceSpec
+	DNSNames  []string
+
+	A     []string
+	AAAA  []string
+	CNAME string
+
+	Text    []string
+	NS      []string
+	Service *api.ServiceSpec
 
 	*object.Empty
 }
@@ -64,8 +70,32 @@ func EntryKey(obj *api.CoreDNSEntry) []string {
 	return keys
 }
 
-// ToEntry returns a client specific converter for converting an api.Service to a *Service.
-func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Object) (meta.Object, error) {
+func normalizeRecords(namespace string, recs []api.SRVRecord, filtered bool, zones ...string) []api.SRVRecord {
+	r := make([]api.SRVRecord, len(recs))
+	base := ""
+	if !filtered {
+		base = fmt.Sprintf("%s.%s", namespace, zones[0])
+	}
+	for i, v := range recs {
+		n := v
+		if !strings.HasSuffix(n.Host, ".") {
+			n.Host = plugin.Name(n.Host).Normalize() + base
+		}
+		r[i] = n
+	}
+	return r
+}
+
+func normalizeHost(namespace string, name string, filtered bool, zones ...string) string {
+	base := ""
+	if !filtered {
+		base = fmt.Sprintf("%s.%s", namespace, zones[0])
+	}
+	return plugin.Name(name).Normalize() + base
+}
+
+// ToEntry returns a client specific converter for converting an api.CoreDNSEntry to a *Entry.
+func ToEntry(ctx context.Context, client clientapi.Interface, filtered bool, zones ...string) func(obj meta.Object) (meta.Object, error) {
 	return func(obj meta.Object) (meta.Object, error) {
 		e, ok := obj.(*api.CoreDNSEntry)
 		if !ok {
@@ -75,45 +105,61 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 			Version:   e.GetResourceVersion(),
 			Name:      e.GetName(),
 			Namespace: e.GetNamespace(),
+			ZoneRef:   e.Spec.ZoneRef,
 		}
 
-		for _, n := range e.Spec.DNSNames {
-			s.Index = append(s.Index, plugin.Name(n).Normalize())
+		base := ""
+		if !filtered {
+			base = fmt.Sprintf("%s.%s", e.Namespace, zones[0])
 		}
+		for _, n := range e.Spec.DNSNames {
+			fmt.Printf("cache %q\n", plugin.Name(n).Normalize()+base)
+			s.DNSNames = append(s.DNSNames, plugin.Name(n).Normalize()+base)
+		}
+
 		var err error
 		var hosts []string
 		for _, ips := range e.Spec.A {
 			ip := net.ParseIP(ips)
-			if ip == nil {
-				err = fmt.Errorf("invalid ip address %q", ips)
-			}
-			if ip != nil && ip.To4() != nil {
+			if ip == nil || ip.To4() == nil {
+				err = fmt.Errorf("invalid ipv4 address %q", ips)
+			} else {
 				hosts = append(hosts, ips)
 			}
 		}
+		s.A, hosts = hosts, nil
+
 		for _, ips := range e.Spec.AAAA {
 			ip := net.ParseIP(ips)
-			if ip == nil {
-				err = fmt.Errorf("invalid ip address %q", ips)
-			}
-			if ip != nil && ip.To4() == nil {
+			if ip == nil || ip.To4() != nil {
+				err = fmt.Errorf("invalid ipv6 address %q", ips)
+			} else {
 				hosts = append(hosts, ips)
 			}
 		}
-		set(&s.Text, e.Spec.TXT)
+		s.AAAA, hosts = hosts, nil
+
 		if len(e.Spec.CNAME) > 0 {
-			hosts = append(hosts, plugin.Name(e.Spec.CNAME).Normalize())
+			host := plugin.Name(e.Spec.CNAME).Normalize()
+			if host != e.Spec.CNAME && !filtered {
+				host = host + base
+			}
+			s.CNAME = host
 		}
-		s.Hosts = hosts
+
+		for _, n := range e.Spec.NS {
+			s.NS = append(s.NS, dns.Fqdn(n)+base)
+		}
+		set(&s.Text, e.Spec.TXT)
 		if e.Spec.SRV != nil {
-			s.Service.Service = e.Spec.SRV.Service
-			set(&s.Service.Records, e.Spec.SRV.Records)
+			s.Service = &api.ServiceSpec{Service: e.Spec.SRV.Service}
+			set(&s.Service.Records, normalizeRecords(e.Namespace, e.Spec.SRV.Records, filtered, zones...))
 		}
 
 		if len(e.Spec.DNSNames) == 0 {
 			err = fmt.Errorf("at least one DNS name is required")
 		}
-		if len(e.Spec.A) == 0 && len(e.Spec.AAAA) == 0 && len(e.Spec.CNAME) == 0 && (e.Spec.SRV == nil || len(e.Spec.SRV.Records) == 0) {
+		if len(e.Spec.A) == 0 && len(e.Spec.AAAA) == 0 && len(e.Spec.CNAME) == 0 && len(e.Spec.NS) == 0 && (e.Spec.SRV == nil || len(e.Spec.SRV.Records) == 0) {
 			err = fmt.Errorf("no record defined")
 		}
 		if e.Spec.SRV != nil {
@@ -139,17 +185,17 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 				e.Status.State = "Invalid"
 				_, err = client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
 			} else {
-				err=nil
+				err = nil
 			}
 		} else {
 			s.Valid = true
 			if e.Status.Message != "" || e.Status.State != "Ok" {
 				e.Status.Message = ""
 				e.Status.State = "Ok"
-				_, err =client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+				_, err = client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
 			}
 		}
-		if err!=nil {
+		if err != nil {
 			Log.Errorf("error updating entry status %s/%s: %s", e.Namespace, e.Name, err)
 		}
 		*e = api.CoreDNSEntry{}
@@ -167,9 +213,11 @@ func (s *Entry) DeepCopyObject() runtime.Object {
 		Name:      s.Name,
 		Namespace: s.Namespace,
 	}
-	set(&s1.Index, s.Index)
-	set(&s1.Hosts, s.Hosts)
+	set(&s1.DNSNames, s.DNSNames)
+	set(&s1.A, s.A)
+	set(&s1.AAAA, s.AAAA)
 	set(&s1.Text, s.Text)
+	s1.CNAME = s.CNAME
 	if s.Service.Service != "" {
 		s1.Service.Service = s.Service.Service
 		set(&s1.Service.Records, s.Service.Records)
@@ -177,35 +225,32 @@ func (s *Entry) DeepCopyObject() runtime.Object {
 	return s1
 }
 
-// Equaö checks if the update to an entry is something
+// Equal checks if the update to an entry is something
 // that matters to us or if they are effectively equivalent.
 func (e *Entry) Equal(b *Entry) bool {
 	if e == nil || b == nil {
 		return false
 	}
 
-	if len(e.Index) != len(b.Index) {
+	if !slices.Equal(e.DNSNames, b.DNSNames) {
 		return false
 	}
-	if len(e.Hosts) != len(b.Hosts) {
+	if !slices.Equal(e.A, b.A) {
 		return false
 	}
-	if len(e.Text) != len(b.Text) {
+	if !slices.Equal(e.AAAA, b.AAAA) {
 		return false
 	}
-	if e.Service.Service != b.Service.Service {
+	if !slices.Equal(e.Text, b.Text) {
 		return false
 	}
-	// we should be able to rely on
-	// these being sorted and able to be compared
-	// they are supposed to be in a canonical format
-	if !sets.NewString(e.Index...).Equal(sets.NewString(b.Index...)) {
-		return false
+	if e.Service != nil || b.Service != nil {
+		if e.Service != b.Service && e.Service.Service != b.Service.Service {
+			return false
+		}
 	}
-	if !sets.NewString(e.Hosts...).Equal(sets.NewString(b.Hosts...)) {
-		return false
-	}
-	if !sets.NewString(e.Text...).Equal(sets.NewString(b.Text...)) {
+
+	if e.CNAME != b.CNAME {
 		return false
 	}
 	if e.Service.Service != "" {
@@ -221,22 +266,38 @@ func (e *Entry) Equal(b *Entry) bool {
 	return true
 }
 
+func (s *Entry) serviceForHosts(defttl uint32, hosts ...string) []msg.Service {
+	var result []msg.Service
+	for _, h := range hosts {
+		result = append(result, msg.Service{
+			Host: h,
+			Port: -1,
+			Mail: false,
+			TTL:  DefTTL(s.Ttl, defttl),
+			Key:  coredns,
+		})
+	}
+	return result
+}
+
 func (s *Entry) Services(t uint16, p string, defttl uint32) []msg.Service {
 	if !s.Valid {
 		return nil
 	}
 	var result []msg.Service
 	switch t {
-	case dns.TypeA, dns.TypeAAAA, dns.TypeCNAME:
-		for _, h := range s.Hosts {
-			result = append(result, msg.Service{
-				Host: h,
-				Port: -1,
-				Mail: false,
-				TTL:  DefTTL(s.Ttl, defttl),
-				Key:  coredns,
-			})
-		}
+	case dns.TypeANY:
+		result = s.serviceForHosts(defttl, s.A...)
+		result = append(result, s.serviceForHosts(defttl, s.AAAA...)...)
+		result = append(result, s.serviceForHosts(defttl, s.CNAME)...)
+		result = append(result, s.Services(dns.TypeTXT, p, defttl)...)
+		result = append(result, s.Services(dns.TypeSRV, p, defttl)...)
+	case dns.TypeA:
+		result = s.serviceForHosts(defttl, s.A...)
+	case dns.TypeAAAA:
+		result = s.serviceForHosts(defttl, s.AAAA...)
+	case dns.TypeCNAME:
+		result = s.serviceForHosts(defttl, s.CNAME)
 	case dns.TypeTXT:
 		for _, h := range s.Text {
 			result = append(result, msg.Service{
@@ -284,6 +345,28 @@ func (s *Entry) GetResourceVersion() string { return s.Version }
 
 // SetResourceVersion implements the metav1.Object interface.
 func (s *Entry) SetResourceVersion(version string) {}
+
+func (s *Entry) MatchType(t uint16) bool {
+	switch t {
+	case dns.TypeANY:
+		return s.MatchType(dns.TypeA) || s.MatchType(dns.TypeAAAA) || s.MatchType(dns.TypeCNAME) || s.MatchType(dns.TypeTXT) || s.MatchType(dns.TypeSRV) || s.MatchType(dns.TypeNS)
+	case dns.TypeA:
+		return len(s.A) > 0
+	case dns.TypeAAAA:
+		return len(s.AAAA) > 0
+	case dns.TypeCNAME:
+		return s.CNAME != ""
+	case dns.TypeTXT:
+		return len(s.Text) > 0
+	case dns.TypeSRV:
+		return s.Service != nil
+	case dns.TypeNS:
+		return len(s.NS) > 0
+	case dns.TypeMX:
+		return false
+	}
+	return false
+}
 
 func set(dst interface{}, src interface{}) {
 	dv := reflect.ValueOf(dst)

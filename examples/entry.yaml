@@ -1,11 +1,12 @@
 kind: CoreDNSEntry
 apiVersion: coredns.mandelsoft.org/v1alpha1
 metadata:
-  name: test
+  name: demo
   namespace: default
 spec:
+  zoneRef: test
   dnsNames:
-  - test.test
+  - demo.test.mandelsoft.org
   A:
   - 8.8.8.8
   TXT:

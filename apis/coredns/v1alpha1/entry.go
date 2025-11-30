@@ -37,10 +37,12 @@ type CoreDNSEntryList struct {
 // +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=corednsentry
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name=DNSNames,JSONPath=".spec.dnsNames",type=string
+// +kubebuilder:printcolumn:name=ZoneRef,JSONPath=".spec.zoneRef",type=string
 // +kubebuilder:printcolumn:name=A,JSONPath=".spec.A",type=string
 // +kubebuilder:printcolumn:name=CNAME,JSONPath=".spec.CNAME",type=string
 // +kubebuilder:printcolumn:name=SRV,JSONPath=".spec.SRV.service",type=string
 // +kubebuilder:printcolumn:name=State,JSONPath=".status.state",type=string
+// +kubebuilder:printcolumn:name=Message,JSONPath=".status.message",type=string,priority=1
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -56,6 +58,10 @@ type CoreDNSEntry struct {
 
 // CoreDNSSpec is  the specification for an dns entry object
 type CoreDNSSpec struct {
+	// ZoneRef is the name of the hosted zone
+	// +optional
+	ZoneRef string `json:"zoneRef"`
+
 	// DNSNames is a list of DNSNames
 	DNSNames []string `json:"dnsNames"`
 	// +optional
@@ -68,6 +74,8 @@ type CoreDNSSpec struct {
 	SRV *ServiceSpec `json:"SRV,omitempty"`
 	// +optional
 	CNAME string `json:"CNAME,omitempty"`
+	// +optional
+	NS []string `json:"NS,omitempty"`
 }
 
 const PROTO_TCP = "TCP"
@@ -95,7 +103,7 @@ type SRVRecord struct {
 	Host string `json:"host"`
 }
 
-// CoreDNSStatus describes the statuso an entry
+// CoreDNSStatus describes the status of an entry
 type CoreDNSStatus struct {
 	// State of the dns entry object
 	// +optional

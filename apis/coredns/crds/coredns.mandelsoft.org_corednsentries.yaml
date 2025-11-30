@@ -1,11 +1,9 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.4.1
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: corednsentries.coredns.mandelsoft.org
 spec:
   group: coredns.mandelsoft.org
@@ -21,6 +19,9 @@ spec:
   - additionalPrinterColumns:
     - jsonPath: .spec.dnsNames
       name: DNSNames
+      type: string
+    - jsonPath: .spec.zoneRef
+      name: ZoneRef
       type: string
     - jsonPath: .spec.A
       name: A
@@ -40,10 +41,19 @@ spec:
         description: CoreDNSEntry describes an additional coredns dns entry
         properties:
           apiVersion:
-            description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           kind:
-            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
@@ -60,6 +70,10 @@ spec:
                 type: array
               CNAME:
                 type: string
+              NS:
+                items:
+                  type: string
+                type: array
               SRV:
                 description: ServiceSpec describes a service's SRV records
                 properties:
@@ -103,11 +117,14 @@ spec:
                 items:
                   type: string
                 type: array
+              zoneRef:
+                description: ZoneRef is the name of the hosted zone
+                type: string
             required:
             - dnsNames
             type: object
           status:
-            description: CoreDNSStatus describes the statuso an entry
+            description: CoreDNSStatus describes the status of an entry
             properties:
               message:
                 description: Error message in case of an invalid entry
@@ -123,9 +140,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

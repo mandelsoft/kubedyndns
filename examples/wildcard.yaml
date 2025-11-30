@@ -1,0 +1,14 @@
+
+
+kind: CoreDNSEntry
+apiVersion: coredns.mandelsoft.org/v1alpha1
+
+metadata:
+  name: wildcard
+  namespace: default
+spec:
+  zoneRef: test
+  dnsNames:
+  - "*.ingress.test.mandelsoft.org"
+  A:
+  - 8.8.4.4

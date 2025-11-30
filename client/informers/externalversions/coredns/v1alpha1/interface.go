@@ -27,6 +27,8 @@ import (
 type Interface interface {
 	// CoreDNSEntries returns a CoreDNSEntryInformer.
 	CoreDNSEntries() CoreDNSEntryInformer
+	// HostedZones returns a HostedZoneInformer.
+	HostedZones() HostedZoneInformer
 }
 
 type version struct {
@@ -43,4 +45,9 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // CoreDNSEntries returns a CoreDNSEntryInformer.
 func (v *version) CoreDNSEntries() CoreDNSEntryInformer {
 	return &coreDNSEntryInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// HostedZones returns a HostedZoneInformer.
+func (v *version) HostedZones() HostedZoneInformer {
+	return &hostedZoneInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

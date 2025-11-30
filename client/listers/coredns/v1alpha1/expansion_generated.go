@@ -26,3 +26,11 @@ type CoreDNSEntryListerExpansion interface{}
 // CoreDNSEntryNamespaceListerExpansion allows custom methods to be added to
 // CoreDNSEntryNamespaceLister.
 type CoreDNSEntryNamespaceListerExpansion interface{}
+
+// HostedZoneListerExpansion allows custom methods to be added to
+// HostedZoneLister.
+type HostedZoneListerExpansion interface{}
+
+// HostedZoneNamespaceListerExpansion allows custom methods to be added to
+// HostedZoneNamespaceLister.
+type HostedZoneNamespaceListerExpansion interface{}

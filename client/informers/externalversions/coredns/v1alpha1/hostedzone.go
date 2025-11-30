@@ -33,71 +33,71 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// CoreDNSEntryInformer provides access to a shared informer and lister for
-// CoreDNSEntries.
-type CoreDNSEntryInformer interface {
+// HostedZoneInformer provides access to a shared informer and lister for
+// HostedZones.
+type HostedZoneInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() corednsv1alpha1.CoreDNSEntryLister
+	Lister() corednsv1alpha1.HostedZoneLister
 }
 
-type coreDNSEntryInformer struct {
+type hostedZoneInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 	namespace        string
 }
 
-// NewCoreDNSEntryInformer constructs a new informer for CoreDNSEntry type.
+// NewHostedZoneInformer constructs a new informer for HostedZone type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewCoreDNSEntryInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCoreDNSEntryInformer(client, namespace, resyncPeriod, indexers, nil)
+func NewHostedZoneInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredHostedZoneInformer(client, namespace, resyncPeriod, indexers, nil)
 }
 
-// NewFilteredCoreDNSEntryInformer constructs a new informer for CoreDNSEntry type.
+// NewFilteredHostedZoneInformer constructs a new informer for HostedZone type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredCoreDNSEntryInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredHostedZoneInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CorednsV1alpha1().CoreDNSEntries(namespace).List(context.Background(), options)
+				return client.CorednsV1alpha1().HostedZones(namespace).List(context.Background(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CorednsV1alpha1().CoreDNSEntries(namespace).Watch(context.Background(), options)
+				return client.CorednsV1alpha1().HostedZones(namespace).Watch(context.Background(), options)
 			},
 			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CorednsV1alpha1().CoreDNSEntries(namespace).List(ctx, options)
+				return client.CorednsV1alpha1().HostedZones(namespace).List(ctx, options)
 			},
 			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CorednsV1alpha1().CoreDNSEntries(namespace).Watch(ctx, options)
+				return client.CorednsV1alpha1().HostedZones(namespace).Watch(ctx, options)
 			},
 		},
-		&apiscorednsv1alpha1.CoreDNSEntry{},
+		&apiscorednsv1alpha1.HostedZone{},
 		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *coreDNSEntryInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCoreDNSEntryInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *hostedZoneInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewFilteredHostedZoneInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
-func (f *coreDNSEntryInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apiscorednsv1alpha1.CoreDNSEntry{}, f.defaultInformer)
+func (f *hostedZoneInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&apiscorednsv1alpha1.HostedZone{}, f.defaultInformer)
 }
 
-func (f *coreDNSEntryInformer) Lister() corednsv1alpha1.CoreDNSEntryLister {
-	return corednsv1alpha1.NewCoreDNSEntryLister(f.Informer().GetIndexer())
+func (f *hostedZoneInformer) Lister() corednsv1alpha1.HostedZoneLister {
+	return corednsv1alpha1.NewHostedZoneLister(f.Informer().GetIndexer())
 }

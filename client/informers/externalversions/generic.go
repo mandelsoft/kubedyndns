@@ -20,7 +20,7 @@
 package externalversions
 
 import (
-	"fmt"
+	fmt "fmt"
 
 	v1alpha1 "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -56,6 +56,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	// Group=coredns.mandelsoft.org, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithResource("corednsentries"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Coredns().V1alpha1().CoreDNSEntries().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("hostedzones"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Coredns().V1alpha1().HostedZones().Informer()}, nil
 
 	}
 

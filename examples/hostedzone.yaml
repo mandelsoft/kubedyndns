@@ -1,0 +1,14 @@
+
+kind: HostedZone
+apiVersion: coredns.mandelsoft.org/v1alpha1
+metadata:
+  name: test
+  namespace: default
+spec:
+  domainName: test.mandelsoft.org
+  email: uwe.krueger@goldmail.de
+  refresh: 7200
+  retry: 3600
+  expire: 1209600
+  minimumTTL: 3600
+  

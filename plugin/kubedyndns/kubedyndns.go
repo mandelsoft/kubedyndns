@@ -43,21 +43,34 @@ import (
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 )
 
+const MODE_FILTER = "FilterByZones"
+const MODE_SUBDOMAINS = "Subdomains"
+const MODE_PRIMARY = "Primary"
+
+type K8SConfig struct {
+	APIServerList []string
+	APICertAuth   string
+	APIClientCert string
+	APIClientKey  string
+	ClientConfig  clientcmd.ClientConfig
+	Namespaces    map[string]struct{}
+	// Label handling.
+	labelSelector *meta.LabelSelector
+	selector      labels.Selector
+}
+
 // KubeDynDNS implements a plugin that connects to a Kubernetes cluster.
 type KubeDynDNS struct {
-	Next             plugin.Handler
-	Zones            []string
-	Upstream         *upstream.Upstream
-	APIServerList    []string
-	APICertAuth      string
-	APIClientCert    string
-	APIClientKey     string
-	ClientConfig     clientcmd.ClientConfig
-	APIConn          Controller
-	Namespaces       map[string]struct{}
-	Fall             fall.F
-	ttl              uint32
-	opts             controlOpts
+	Next        plugin.Handler
+	Mode        string
+	Zones       []string
+	ServedZones []string
+	Upstream    *upstream.Upstream
+	APIConn     Controller
+	Fall        fall.F
+	ttl         uint32
+	k8s         *K8SConfig
+	controlOpts
 	primaryZoneIndex int
 	localIPs         []net.IP
 }
@@ -67,10 +80,19 @@ type KubeDynDNS struct {
 func New(zones []string) *KubeDynDNS {
 	k := new(KubeDynDNS)
 	k.Zones = zones
-	k.Namespaces = make(map[string]struct{})
 	k.ttl = defaultTTL
-
+	k.Mode = MODE_FILTER
+	k.namespaces = make(map[string]struct{})
 	return k
+}
+
+func (k *KubeDynDNS) assureK8SConfig() *K8SConfig {
+	if k.k8s == nil {
+		k.k8s = &K8SConfig{
+			Namespaces: make(map[string]struct{}),
+		}
+	}
+	return k.k8s
 }
 
 const (
@@ -107,7 +129,6 @@ func (k *KubeDynDNS) Services(ctx context.Context, state request.Request, exact 
 	}
 
 	s, e := k.Records(ctx, state, false)
-
 	return s, e
 }
 
@@ -124,8 +145,8 @@ func (k *KubeDynDNS) IsNameError(err error) bool {
 	return err == errNoItems || err == errNsNotExposed || err == errInvalidRequest
 }
 
-func (k *KubeDynDNS) getClientConfig() (*rest.Config, error) {
-	if k.ClientConfig != nil {
+func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
+	if k != nil && k.ClientConfig != nil {
 		return k.ClientConfig.ClientConfig()
 	}
 	loadingRules := &clientcmd.ClientConfigLoadingRules{}
@@ -134,13 +155,13 @@ func (k *KubeDynDNS) getClientConfig() (*rest.Config, error) {
 	authinfo := clientcmdapi.AuthInfo{}
 
 	// Connect to API from in cluster
-	if len(k.APIServerList) == 0 {
+	if k == nil || len(k.APIServerList) == 0 {
 		log.Infof("using in-cluster config")
 		cc, err := rest.InClusterConfig()
 		if err != nil {
 			return nil, err
 		}
-		//cc.ContentType = "application/vnd.kubernetes.protobuf"
+		// cc.ContentType = "application/vnd.kubernetes.protobuf"
 		return cc, err
 	}
 
@@ -173,7 +194,7 @@ func (k *KubeDynDNS) getClientConfig() (*rest.Config, error) {
 
 // InitKubeCache initializes a new Kubernetes cache.
 func (k *KubeDynDNS) InitKubeCache(ctx context.Context) (err error) {
-	config, err := k.getClientConfig()
+	config, err := k.k8s.getClientConfig()
 	if err != nil {
 		return err
 	}
@@ -187,27 +208,20 @@ func (k *KubeDynDNS) InitKubeCache(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to create kubernetes notification controller: %q", err)
 	}
 
-	if k.opts.labelSelector != nil {
+	if k.k8s.labelSelector != nil {
 		var selector labels.Selector
-		selector, err = meta.LabelSelectorAsSelector(k.opts.labelSelector)
+		selector, err = meta.LabelSelectorAsSelector(k.k8s.labelSelector)
 		if err != nil {
-			return fmt.Errorf("unable to create Selector for LabelSelector '%s': %q", k.opts.labelSelector, err)
+			return fmt.Errorf("unable to create Selector for LabelSelector '%s': %q", k.k8s.labelSelector, err)
 		}
-		k.opts.selector = selector
+		k.k8s.selector = selector
 	}
 
-	if k.opts.namespaceLabelSelector != nil {
-		var selector labels.Selector
-		selector, err = meta.LabelSelectorAsSelector(k.opts.namespaceLabelSelector)
-		if err != nil {
-			return fmt.Errorf("unable to create Selector for LabelSelector '%s': %q", k.opts.namespaceLabelSelector, err)
-		}
-		k.opts.namespaceSelector = selector
-	}
+	k.zones = k.ServedZones
+	k.filtered = k.Mode != MODE_SUBDOMAINS
 
-	k.opts.zones = k.Zones
-
-	k.APIConn = newController(ctx, kubeClient, apiClient, k.opts)
+	log.Infof("using mode %s(%s) %v", k.Mode, k.Zones[k.primaryZoneIndex], k.ServedZones)
+	k.APIConn = newController(ctx, kubeClient, apiClient, k.controlOpts)
 
 	return err
 }
@@ -247,7 +261,9 @@ func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (servic
 		}
 	} else {
 		for _, e := range entries {
-			services = append(services, e.Services(t, "", k.ttl)...)
+			if e.MatchType(t) {
+				services = append(services, e.Services(t, "", k.ttl)...)
+			}
 		}
 	}
 
@@ -259,6 +275,16 @@ func (k *KubeDynDNS) Serial(state request.Request) uint32 { return uint32(k.APIC
 
 // MinTTL returns the minimal TTL.
 func (k *KubeDynDNS) MinTTL(state request.Request) uint32 { return k.ttl }
+
+func (k *KubeDynDNS) TTL(ttl uint32) uint32 {
+	if ttl > 0 {
+		return ttl
+	}
+	if k.ttl > 0 {
+		return k.ttl
+	}
+	return 300
+}
 
 // match checks if a and b are equal taking wildcards into account.
 func match(a, b string) bool {

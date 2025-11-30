@@ -32,6 +32,11 @@ func isDefaultNS(name, zone string) bool {
 // nsAddrs returns the A or AAAA records for the CoreDNS service in the cluster. If the service cannot be found,
 // it returns a record for the local address of the machine we're running on.
 func (k *KubeDynDNS) nsAddrs(external bool, zone string) []dns.RR {
+
+	if k.zoneRef != nil {
+		// don't expose in-cluster address
+		return nil
+	}
 	var (
 		svcNames []string
 		svcIPs   []net.IP

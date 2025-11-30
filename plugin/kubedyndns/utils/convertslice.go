@@ -1,8 +1,5 @@
-// +k8s:deepcopy-gen=package
-// +groupName=coredns.mandelsoft.org
-
 /*
- * Copyright 2021 Mandelsoft. All rights reserved.
+ * Copyright 2025 Mandelsoft. All rights reserved.
  *  This file is licensed under the Apache Software License, v. 2 except as noted
  *  otherwise in the LICENSE file
  *
@@ -19,7 +16,17 @@
  *  limitations under the License.
  */
 
-package coredns
+package utils
 
-
-//go:generate ../../hack/generate-crds
+func ConvertSlice[T any](list []interface{}, err error) []T {
+	var entries []T
+	if err != nil {
+		return nil
+	}
+	for _, o := range list {
+		if s, ok := o.(T); ok {
+			entries = append(entries, s)
+		}
+	}
+	return entries
+}

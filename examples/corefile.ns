@@ -1,0 +1,14 @@
+
+.:1053 {
+  errors
+  health
+  ready
+  kubedyndns test.mandelsoft.org {
+    mode Primary
+    zoneobject zone/default
+    kubeconfig secrets/kubeconfig default
+    ttl 30
+  }
+  forward . /etc/resolv.conf
+  cache 30
+}

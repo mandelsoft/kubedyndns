@@ -1,0 +1,16 @@
+apiVersion: resources.k8s.io/v1alpha1
+kind: LogicalResourceDefinition
+metadata:
+  name: dnsres.coredns.mandelsoft.org
+spec:
+  resource:
+    kind: dnsres
+    plural: dnsreses
+    group: coredns.mandelsoft.org
+  composition:
+    resources:
+      - apiGroup: coredns.mandelsoft.org/v1alpha1
+        kind: CoreDNSEntry
+      - apiGroup: coredns.mandelsoft.org/v1alpha1
+        kind: HostedZone
+        

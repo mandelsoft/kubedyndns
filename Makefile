@@ -28,12 +28,6 @@ all: generate dev
 endif
 
 
-.PHONY: revendor
-revendor:
-	@GO111MODULE=on go mod vendor
-	@GO111MODULE=on go mod tidy
-
-
 .PHONY: check
 check:
 	@.ci/check
@@ -42,7 +36,6 @@ check:
 dev:
 	for name in $(NAMES); do \
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go install \
-        -mod=vendor \
 	    $(LD_FLAGS) \
 	    ./cmds/$$name; \
 	done
@@ -51,16 +44,14 @@ dev:
 coredns-dev:
 	for name in coredns; do \
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go install \
-        -mod=vendor \
 	    $(LD_FLAGS) \
 	    ./cmds/$$name; \
 	done
 
-.PHONY: build-local
-build-local:
+.PHONY: build
+build:
 	for name in $(NAMES); do \
 	CGO_ENABLED=0 GO111MODULE=on go build -o $$name \
-	    -mod=vendor \
 	    $(LD_FLAGS) \
 	    ./cmds/$$name; \
 	done
@@ -73,7 +64,6 @@ release:
 	for name in $(NAMES); do \
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go install \
 	    -a \
-	    -mod=vendor \
 	    $(LD_FLAGS) \
 	    ./cmds/$$name; \
 	done
@@ -83,18 +73,17 @@ coredns-release:
 	for name in coredns; do \
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go install \
 	    -a \
-	    -mod=vendor \
 	    $(LD_FLAGS) \
 	    ./cmds/$$name; \
 	done
 
 .PHONY: test
 test:
-	GO111MODULE=on go test -mod=vendor ./pkg/...
+	GO111MODULE=on go test  ./...
 
 .PHONY: generate
 generate:
-	@go generate ./pkg/...
+	@go generate ./...
 
 
 ### Docker commands

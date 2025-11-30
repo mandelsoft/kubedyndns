@@ -25,26 +25,24 @@ import (
 	gentype "k8s.io/client-go/gentype"
 )
 
-// fakeCoreDNSEntries implements CoreDNSEntryInterface
-type fakeCoreDNSEntries struct {
-	*gentype.FakeClientWithList[*v1alpha1.CoreDNSEntry, *v1alpha1.CoreDNSEntryList]
+// fakeHostedZones implements HostedZoneInterface
+type fakeHostedZones struct {
+	*gentype.FakeClientWithList[*v1alpha1.HostedZone, *v1alpha1.HostedZoneList]
 	Fake *FakeCorednsV1alpha1
 }
 
-func newFakeCoreDNSEntries(fake *FakeCorednsV1alpha1, namespace string) corednsv1alpha1.CoreDNSEntryInterface {
-	return &fakeCoreDNSEntries{
-		gentype.NewFakeClientWithList[*v1alpha1.CoreDNSEntry, *v1alpha1.CoreDNSEntryList](
+func newFakeHostedZones(fake *FakeCorednsV1alpha1, namespace string) corednsv1alpha1.HostedZoneInterface {
+	return &fakeHostedZones{
+		gentype.NewFakeClientWithList[*v1alpha1.HostedZone, *v1alpha1.HostedZoneList](
 			fake.Fake,
 			namespace,
-			v1alpha1.SchemeGroupVersion.WithResource("corednsentries"),
-			v1alpha1.SchemeGroupVersion.WithKind("CoreDNSEntry"),
-			func() *v1alpha1.CoreDNSEntry { return &v1alpha1.CoreDNSEntry{} },
-			func() *v1alpha1.CoreDNSEntryList { return &v1alpha1.CoreDNSEntryList{} },
-			func(dst, src *v1alpha1.CoreDNSEntryList) { dst.ListMeta = src.ListMeta },
-			func(list *v1alpha1.CoreDNSEntryList) []*v1alpha1.CoreDNSEntry {
-				return gentype.ToPointerSlice(list.Items)
-			},
-			func(list *v1alpha1.CoreDNSEntryList, items []*v1alpha1.CoreDNSEntry) {
+			v1alpha1.SchemeGroupVersion.WithResource("hostedzones"),
+			v1alpha1.SchemeGroupVersion.WithKind("HostedZone"),
+			func() *v1alpha1.HostedZone { return &v1alpha1.HostedZone{} },
+			func() *v1alpha1.HostedZoneList { return &v1alpha1.HostedZoneList{} },
+			func(dst, src *v1alpha1.HostedZoneList) { dst.ListMeta = src.ListMeta },
+			func(list *v1alpha1.HostedZoneList) []*v1alpha1.HostedZone { return gentype.ToPointerSlice(list.Items) },
+			func(list *v1alpha1.HostedZoneList, items []*v1alpha1.HostedZone) {
 				list.Items = gentype.FromPointerSlice(items)
 			},
 		),

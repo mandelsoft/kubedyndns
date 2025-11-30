@@ -1,0 +1,137 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: hostedzones.coredns.mandelsoft.org
+spec:
+  group: coredns.mandelsoft.org
+  names:
+    kind: HostedZone
+    listKind: HostedZoneList
+    plural: hostedzones
+    shortNames:
+    - chs
+    singular: hostedzone
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.domainName
+      name: Domain
+      type: string
+    - jsonPath: .spec.parentRef
+      name: Parent
+      type: string
+    - jsonPath: .spec.email
+      name: EMail
+      type: string
+    - jsonPath: .status.nameServers
+      name: NameServer
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .spec.serial
+      name: Serial
+      priority: 1
+      type: string
+    - jsonPath: .spec.refresh
+      name: Refresh
+      priority: 1
+      type: string
+    - jsonPath: .spec.retry
+      name: Retry
+      priority: 1
+      type: string
+    - jsonPath: .spec.expire
+      name: Expire
+      priority: 1
+      type: string
+    - jsonPath: .spec.minimumTTL
+      name: MinTTL
+      priority: 1
+      type: string
+    - jsonPath: .status.message
+      name: Message
+      priority: 1
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HostedZone describes a a DNS Hosted Zone configured in a namespace.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HostedZoneSpec is  the specification for a dns hostedzone
+              object
+            properties:
+              domainName:
+                description: DomainName is the name of the domain of the hosted zone.
+                type: string
+              email:
+                description: EMail address of admins.
+                type: string
+              expire:
+                description: Expire is the maximal validity interval.
+                type: integer
+              minimumTTL:
+                description: MinmumTTL is the minimal live time.
+                type: integer
+              parentRef:
+                description: ParantRef is the name if a local hosted zone resource
+                  it is linked to.
+                type: string
+              refresh:
+                description: Refresh is the interval for secondaries to query to updates
+                type: integer
+              retry:
+                description: Retry time to repeat refresh.
+                type: integer
+            required:
+            - domainName
+            - email
+            - expire
+            - minimumTTL
+            - refresh
+            - retry
+            type: object
+          status:
+            description: HostedZoneStatus describes the statuso a hostedzone.
+            properties:
+              message:
+                description: Error message in case of an invalid entry
+                type: string
+              nameServers:
+                description: NameServers is a list of wname servers for the hosted
+                  zone.
+                items:
+                  type: string
+                type: array
+              state:
+                description: State of the dns entry object
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
