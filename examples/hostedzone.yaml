@@ -5,8 +5,10 @@ metadata:
   name: test
   namespace: default
 spec:
-  domainName: test.mandelsoft.org
-  email: uwe.krueger@goldmail.de
+  domainNames:
+  - test.mandelsoft.org
+  - test.mandelsoft.de
+  email: uwe.krueger@mandelsoft.de
   refresh: 7200
   retry: 3600
   expire: 1209600

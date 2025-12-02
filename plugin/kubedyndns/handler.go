@@ -56,6 +56,23 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 		return plugin.NextOrFailure(k.Name(), k.Next, ctx, w, in)
 	}
 	zo := k.APIConn.GetZone(k.zoneRef)
+
+	var zones []string
+	if zone == "." {
+		zones = zo.DomainNames
+	} else {
+		for _, z := range zo.DomainNames {
+			zones = append(zones, z+zone)
+		}
+	}
+
+	if zo != nil {
+		zone = plugin.Zones(zones).Matches(qname)
+	}
+	if zone == "" {
+		return plugin.NextOrFailure(k.Name(), k.Next, ctx, w, in)
+	}
+
 	zone = qname[len(qname)-len(zone):] // maintain case of original query
 	state.Zone = zone
 

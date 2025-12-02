@@ -210,9 +210,8 @@ func zoneIndexFunc(obj interface{}) ([]string, error) {
 	if !ok {
 		return nil, errObj
 	}
-	d := dns.Fqdn(e.DomainName)
-	log.Infof("found zone %s/%s -> %v\n", e.Name, e.Namespace, d)
-	return []string{d}, nil
+	log.Infof("found zone %s/%s -> %v\n", e.Name, e.Namespace, e.DomainNames)
+	return e.DomainNames, nil
 }
 
 func zoneParentIndexFunc(obj interface{}) ([]string, error) {

@@ -129,6 +129,7 @@ func parse(c *caddy.Controller) ([]*KubeDynDNS, error) {
 		r  []*KubeDynDNS
 	)
 
+	singleton := ""
 	i := 0
 	for c.Next() {
 		i++
@@ -137,8 +138,14 @@ func parse(c *caddy.Controller) ([]*KubeDynDNS, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(k8s.namespaces) == 0 {
+			singleton = "using at least one instance for all namespaces"
+		}
 		kc = k8s.assureK8SConfig()
 		r = append(r, k8s)
+	}
+	if singleton != "" && len(r) > 1 {
+		return nil, fmt.Errorf("this plugin can only be used once per Server Block: %s", singleton)
 	}
 	return r, nil
 }

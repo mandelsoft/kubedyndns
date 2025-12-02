@@ -82,9 +82,11 @@ spec:
             description: HostedZoneSpec is  the specification for a dns hostedzone
               object
             properties:
-              domainName:
+              domainNames:
                 description: DomainName is the name of the domain of the hosted zone.
-                type: string
+                items:
+                  type: string
+                type: array
               email:
                 description: EMail address of admins.
                 type: string
@@ -105,7 +107,7 @@ spec:
                 description: Retry time to repeat refresh.
                 type: integer
             required:
-            - domainName
+            - domainNames
             - email
             - expire
             - minimumTTL

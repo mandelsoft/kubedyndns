@@ -69,7 +69,11 @@ func ToZone(ctx context.Context, client clientapi.Interface) func(obj meta.Objec
 			s.NameServers = append(s.NameServers, plugin.Name(n).Normalize())
 		}
 
-		s.DomainName = dns.Fqdn(s.DomainName)
+		s.DomainNames = nil
+		for _, n := range e.Spec.DomainNames {
+			s.DomainNames = append(s.DomainNames, dns.Fqdn(n))
+		}
+
 		var err error
 		if s.EMail == "" {
 			err = fmt.Errorf("email address requird")
@@ -139,7 +143,7 @@ func (e *Zone) Equal(b *Zone) bool {
 		return false
 	}
 
-	if e.HostedZoneSpec != b.HostedZoneSpec {
+	if !e.HostedZoneSpec.Equal(&b.HostedZoneSpec) {
 		return false
 	}
 	return true

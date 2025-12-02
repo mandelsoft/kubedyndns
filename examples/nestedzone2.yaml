@@ -6,8 +6,9 @@ metadata:
   namespace: default
 spec:
   parentRef: test
-  domainName: b.nested
-  email: uwe.krueger@goldmail.de
+  domainNames:
+  - b.nested
+  email: uwe.krueger@mandelsoft.de
   refresh: 7200
   retry: 3600
   expire: 1209600

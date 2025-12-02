@@ -19,6 +19,8 @@
 package v1alpha1
 
 import (
+	"slices"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -62,7 +64,7 @@ type HostedZone struct {
 // HostedZoneSpec is  the specification for a dns hostedzone object
 type HostedZoneSpec struct {
 	// DomainName is the name of the domain of the hosted zone.
-	DomainName string `json:"domainName"`
+	DomainNames []string `json:"domainNames"`
 
 	// EMail address of admins.
 	EMail string `json:"email"`
@@ -82,6 +84,18 @@ type HostedZoneSpec struct {
 	// ParantRef is the name if a local hosted zone resource it is linked to.
 	// +optional
 	ParentRef string `json:"parentRef"`
+}
+
+func (h *HostedZoneSpec) Equal(other *HostedZoneSpec) bool {
+	if h.EMail != other.EMail ||
+		h.Refresh != other.Refresh ||
+		h.Retry != other.Retry ||
+		h.Expire != other.Expire ||
+		h.MinimumTTL != other.MinimumTTL ||
+		slices.Compare(h.DomainNames, other.DomainNames) != 0 {
+		return false
+	}
+	return true
 }
 
 // HostedZoneStatus describes the statuso a hostedzone.

@@ -35,6 +35,10 @@ spec:
     - jsonPath: .status.state
       name: State
       type: string
+    - jsonPath: .status.message
+      name: Message
+      priority: 1
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
