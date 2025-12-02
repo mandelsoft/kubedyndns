@@ -27,12 +27,9 @@ import (
 	"strings"
 
 	"github.com/coredns/coredns/plugin"
-	"github.com/coredns/coredns/plugin/etcd/msg"
-	"github.com/coredns/coredns/plugin/pkg/dnsutil"
 	"github.com/coredns/coredns/plugin/pkg/fall"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 	"github.com/coredns/coredns/request"
-	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 	"github.com/miekg/dns"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -110,42 +107,8 @@ var (
 	errInvalidRequest = errors.New("invalid query name")
 )
 
-// Services implements the ServiceBackend interface.
-func (k *KubeDynDNS) Services(ctx context.Context, state request.Request, exact bool, opt plugin.Options) (svcs []msg.Service, err error) {
-
-	switch state.QType() {
-	case dns.TypeNS:
-		// We can only get here if the qname equals the zone, see ServeDNS in handler.go.
-		nss := k.nsAddrs(false, state.Zone)
-		var svcs []msg.Service
-		for _, ns := range nss {
-			if ns.Header().Rrtype == dns.TypeA {
-				svcs = append(svcs, msg.Service{Host: ns.(*dns.A).A.String(), Key: msg.Path(ns.Header().Name, coredns), TTL: k.ttl})
-				continue
-			}
-			if ns.Header().Rrtype == dns.TypeAAAA {
-				svcs = append(svcs, msg.Service{Host: ns.(*dns.AAAA).AAAA.String(), Key: msg.Path(ns.Header().Name, coredns), TTL: k.ttl})
-			}
-		}
-		return svcs, nil
-	}
-
-	s, e := k.Records(ctx, state, false)
-	return s, e
-}
-
 // primaryZone will return the first non-reverse zone being handled by this plugin
 func (k *KubeDynDNS) primaryZone() string { return k.Zones[k.primaryZoneIndex] }
-
-// Lookup implements the ServiceBackend interface.
-func (k *KubeDynDNS) Lookup(ctx context.Context, state request.Request, name string, typ uint16) (*dns.Msg, error) {
-	return k.Upstream.Lookup(ctx, state, name, typ)
-}
-
-// IsNameError implements the ServiceBackend interface.
-func (k *KubeDynDNS) IsNameError(err error) bool {
-	return err == errNoItems || err == errNsNotExposed || err == errInvalidRequest
-}
 
 func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
 	if k != nil && k.ClientConfig != nil {
@@ -228,68 +191,6 @@ func (k *KubeDynDNS) InitKubeCache(ctx context.Context) (err error) {
 	return err
 }
 
-// Records looks up services in kubernetes.
-func (k *KubeDynDNS) Records(ctx context.Context, state request.Request, exact bool) ([]msg.Service, error) {
-	r, e := parseRequest(state.Name(), state.Zone)
-	if e != nil {
-		return nil, e
-	}
-	if dnsutil.IsReverse(state.Name()) > 0 {
-		return nil, errNoItems
-	}
-
-	if r.service != "" && state.QType() != dns.TypeSRV {
-		return nil, errNoItems
-	}
-	services, err := k.findEntries(r, state.Zone, state.QType())
-	return services, err
-}
-
-// findServices returns the services matching r from the cache.
-func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (services []msg.Service, err error) {
-	var entries []*objects.Entry
-
-	if k.filtered {
-		entries = k.APIConn.EntryDNSIndex(r.domain + "." + zone)
-		log.Infof("find (filtered) %s.%s -> %d entries", r.domain, zone, len(entries))
-	} else {
-		tmp := k.APIConn.EntryDNSIndex(r.domain + ".")
-		for _, e := range tmp {
-			if e.ZoneRef == k.zoneObject {
-				entries = append(entries, e)
-			}
-		}
-		log.Infof("find %s. -> %d entries -> %d in %s<%s>", r.domain, len(tmp), len(entries), k.zoneObject, zone)
-	}
-	if len(entries) == 0 {
-		return nil, errNoItems
-	}
-
-	if r.service != "" {
-		for _, e := range entries {
-			if e.Service.Service == r.service {
-				for _, s := range e.Services(t, r.protocol, k.ttl, zone) {
-					services = append(services, s)
-				}
-			}
-		}
-	} else {
-		for _, e := range entries {
-			if e.MatchType(t) {
-				services = append(services, e.Services(t, "", k.ttl, zone)...)
-			}
-		}
-	}
-
-	return services, nil
-}
-
-// Serial return the SOA serial.
-func (k *KubeDynDNS) Serial(state request.Request) uint32 { return uint32(k.APIConn.Modified()) }
-
-// MinTTL returns the minimal TTL.
-func (k *KubeDynDNS) MinTTL(state request.Request) uint32 { return k.ttl }
-
 func (k *KubeDynDNS) TTL(ttl uint32) uint32 {
 	if ttl > 0 {
 		return ttl
@@ -317,3 +218,29 @@ func wildcard(s string) bool {
 }
 
 const coredns = "c" // used as a fake key prefix in msg.Service
+
+// BackendError writes an error response to the client.
+func (k *KubeDynDNS) BackendError(ctx context.Context, zi *ZoneInfo, rcode int, state request.Request, err error) (int, error) {
+	m := new(dns.Msg)
+	m.SetRcode(state.Req, rcode)
+	m.Authoritative = true
+	m.Ns = k.SOA(ctx, zi, state)
+
+	state.W.WriteMsg(m)
+	// Return success as the rcode to signal we have written to the client.
+	return dns.RcodeSuccess, err
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// general backend methods
+
+// IsNameError implements the ServiceBackend interface.
+func (k *KubeDynDNS) IsNameError(err error) bool {
+	return err == errNoItems || err == errNsNotExposed || err == errInvalidRequest
+}
+
+// Serial return the SOA serial.
+func (k *KubeDynDNS) Serial(state request.Request) uint32 { return uint32(k.APIConn.Modified()) }
+
+// MinTTL returns the minimal TTL.
+func (k *KubeDynDNS) MinTTL(state request.Request) uint32 { return k.ttl }

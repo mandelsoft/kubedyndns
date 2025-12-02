@@ -1,10 +1,10 @@
 kind: CoreDNSEntry
 apiVersion: coredns.mandelsoft.org/v1alpha1
 metadata:
-  name: nested-demo
+  name: demo-a-nested
   namespace: default
 spec:
-  zoneRef: nested-test
+  zoneRef: a-nested-test
   dnsNames:
   - demo
   A:

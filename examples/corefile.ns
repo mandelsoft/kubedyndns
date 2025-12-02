@@ -5,7 +5,9 @@
   ready
   kubedyndns test.mandelsoft.org {
     mode Primary
-    zoneobject zone/default
+    zoneobject test
+    namespaces default
+    transitive
     kubeconfig secrets/kubeconfig default
     ttl 30
   }

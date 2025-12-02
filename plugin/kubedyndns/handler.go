@@ -27,7 +27,6 @@ import (
 	"github.com/coredns/coredns/request"
 	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 	"github.com/miekg/dns"
-	"k8s.io/client-go/tools/cache"
 )
 
 func withType(req *request.Request, t uint16) *request.Request {
@@ -40,6 +39,11 @@ func withType(req *request.Request, t uint16) *request.Request {
 	in.Question = slices.Clone(in.Question)
 	in.Question[0].Qtype = t
 	return &n
+}
+
+// Name implements the Handler interface.
+func (k *KubeDynDNS) Name() string {
+	return "kubernetes"
 }
 
 // ServeDNS implements the plugin.Handler interface.
@@ -62,83 +66,42 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 		err     error
 	)
 
-	dz, rs, zn := k.findZone(zo, qname)
+	zi := NewZoneInfo(zone, zo)
+
+	dz, rs, zn := k.findZone(zi, qname)
 	if rs != nil {
 		for _, r := range rs {
 			for _, s := range r.NS {
-				auth = append(auth, k.NS(s, qname, r.Ttl, state)...)
+				auth = append(auth, k.NS(s, qname, r.Ttl)...)
 			}
 			if len(auth) == 0 {
-				auth = append(auth, k.NS("ns."+qname, qname, r.Ttl, state)...)
+				auth = append(auth, k.NS("ns."+qname, qname, r.Ttl)...)
 			}
 		}
 	} else {
 		if dz != nil {
-			if zo != dz {
+			if zi != dz {
 				if k.transitive && !(state.QType() == dns.TypeNS && qname == zn) {
-					zo = dz
+					zi = dz
+					state.Zone = zn
 				} else {
-					for _, s := range dz.NameServers {
-						auth = append(auth, k.NS(s, qname, uint32(dz.MinimumTTL), state)...)
+					for _, s := range dz.Object.NameServers {
+						auth = append(auth, k.NS(s, qname, uint32(dz.Object.MinimumTTL))...)
 					}
 					if len(auth) == 0 {
-						auth = append(auth, k.NS("ns."+qname, qname, uint32(dz.MinimumTTL), state)...)
+						auth = append(auth, k.NS("ns."+qname, qname, uint32(dz.Object.MinimumTTL))...)
 					}
 				}
 			}
 		}
 		if len(auth) == 0 {
-			switch state.QType() {
-			case dns.TypeANY:
-				var r []dns.RR
-				records, _, err = plugin.A(ctx, k, zone, *withType(&state, dns.TypeA), nil, plugin.Options{})
-
-				r, _, err = plugin.AAAA(ctx, k, zone, *withType(&state, dns.TypeAAAA), nil, plugin.Options{})
-				records = append(records, r...)
-
-				r, _, err = plugin.TXT(ctx, k, zone, *withType(&state, dns.TypeTXT), nil, plugin.Options{})
-				records = append(records, r...)
-
-				r, err = plugin.CNAME(ctx, k, zone, *withType(&state, dns.TypeCNAME), plugin.Options{})
-				records = append(records, r...)
-
-				r, extra, err = plugin.SRV(ctx, k, zone, *withType(&state, dns.TypeSRV), plugin.Options{})
-				records = append(records, r...)
-
-				if state.Name() == zone {
-					r, extra, err = plugin.NS(ctx, k, zone, *withType(&state, dns.TypeNS), plugin.Options{})
-					records = append(records, r...)
-				}
-
-			case dns.TypeA:
-				records, _, err = plugin.A(ctx, k, zone, state, nil, plugin.Options{})
-			case dns.TypeAAAA:
-				records, _, err = plugin.AAAA(ctx, k, zone, state, nil, plugin.Options{})
-			case dns.TypeTXT:
-				records, _, err = plugin.TXT(ctx, k, zone, state, nil, plugin.Options{})
-			case dns.TypeCNAME:
-				records, err = plugin.CNAME(ctx, k, zone, state, plugin.Options{})
-			case dns.TypePTR:
-				records, err = plugin.PTR(ctx, k, zone, state, plugin.Options{})
-			case dns.TypeMX:
-				records, extra, err = plugin.MX(ctx, k, zone, state, plugin.Options{})
-			case dns.TypeSRV:
-				records, extra, err = plugin.SRV(ctx, k, zone, state, plugin.Options{})
-			case dns.TypeSOA:
-				records, err = k.SOA(ctx, k.findMatchingZone(zo, qname), zone, state), nil
-
-			case dns.TypeNS:
-				if state.Name() == zone {
-					records, extra, err = plugin.NS(ctx, k, zone, state, plugin.Options{})
-					break
-				}
-				fallthrough
-			default:
-				// Do a fake A lookup, so we can distinguish between NODATA and NXDOMAIN
-				fake := state.NewWithQuestion(state.QName(), dns.TypeA)
-				fake.Zone = state.Zone
-				_, _, err = plugin.A(ctx, k, zone, fake, nil, plugin.Options{})
-			}
+			// we need the ZoneInfo in the Records method, but it cannot be passed
+			// through the intermediate coredns calls.
+			// therefore we create a delegate containing this information per request
+			// which implements the required plugin.ServiceBackend interface in combination
+			// with the general methods of the KubeDynDNS object.
+			be := &Backend{zoneInfo: zi, KubeDynDNS: k}
+			records, extra, err = be.Handle(ctx, state)
 		} else {
 			if state.QType() == dns.TypeNS {
 				records = auth
@@ -153,9 +116,9 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 		}
 		if !k.APIConn.HasSynced() {
 			// If we haven't synchronized with the kubernetes cluster, return server failure
-			return k.BackendError(ctx, zo, zone, dns.RcodeServerFailure, state, nil)
+			return k.BackendError(ctx, zi, dns.RcodeServerFailure, state, nil)
 		}
-		return k.BackendError(ctx, zo, zone, dns.RcodeNameError, state, nil)
+		return k.BackendError(ctx, zi, dns.RcodeNameError, state, nil)
 	}
 	if err != nil {
 		return dns.RcodeServerFailure, err
@@ -170,7 +133,7 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 		if len(auth) > 0 {
 			m.Ns = auth
 		} else {
-			m.Ns = k.SOA(ctx, zo, zone, state)
+			m.Ns = k.SOA(ctx, zi, state)
 		}
 	}
 
@@ -178,14 +141,12 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 	return dns.RcodeSuccess, nil
 }
 
-// Name implements the Handler interface.
-func (k *KubeDynDNS) Name() string { return "kubernetes" }
-
-func (k *KubeDynDNS) findZone(base *objects.Zone, qname string) (*objects.Zone, []*objects.Entry, string) {
+func (k *KubeDynDNS) findZone(zi *ZoneInfo, qname string) (*ZoneInfo, []*objects.Entry, string) {
 	qname = dns.Fqdn(qname)
-	sub := qname[:len(qname)-len(base.DomainName)]
+	zn := zi.DomainName
+	sub := qname[:len(qname)-len(zn)]
 	labels := dns.SplitDomainName(sub)
-	cur := base.DomainName
+	cur := zn
 	rel := "."
 	for i := range labels {
 		l := labels[len(labels)-1-i]
@@ -194,9 +155,11 @@ func (k *KubeDynDNS) findZone(base *objects.Zone, qname string) (*objects.Zone, 
 		log.Infof("lookup nested zone for %s/%s\n", cur, rel)
 		var ns []*objects.Entry
 		for _, e := range k.APIConn.EntryDNSIndex(rel) {
-			if e.ZoneRef == base.Name && e.Namespace == base.Namespace {
+			if zi.Match(e.ZoneRef, e) {
 				if len(e.NS) != 0 {
 					ns = append(ns, e)
+					zn = cur
+					break
 				}
 			}
 		}
@@ -205,99 +168,67 @@ func (k *KubeDynDNS) findZone(base *objects.Zone, qname string) (*objects.Zone, 
 			return nil, ns, cur
 		}
 		for _, e := range k.APIConn.ZoneDomainIndex(rel) {
-			if e.ParentRef == base.Name && e.Namespace == base.Namespace {
+			if zi.Match(e.ParentRef, e) {
 				log.Infof("found nested zone for %s: %s<%s>\n", cur, e.Name, rel)
-				if !k.transitive {
-					return e, nil, cur
-				}
+				zn = cur
 				rel = "."
-				base = e
+				zi = NewZoneInfo(zn, e)
+				if !k.transitive {
+					return zi, nil, zi.DomainName
+				}
+				break
 			}
 		}
 	}
 
-	return base, nil, cur
+	return zi, nil, zi.DomainName
 }
 
-func (k *KubeDynDNS) findMatchingZone(base *objects.Zone, qname string) *objects.Zone {
+func (k *KubeDynDNS) SOA(ctx context.Context, zi *ZoneInfo, state request.Request) []dns.RR {
+	if zi != nil {
+		ttl := uint32(min(zi.Object.MinimumTTL, 300))
+		header := dns.RR_Header{Name: zi.DomainName, Rrtype: dns.TypeSOA, Ttl: ttl, Class: dns.ClassINET}
 
-	currentDomain := dns.Fqdn(qname)
-	labelCount := dns.CountLabel(currentDomain)
-
-	if base == nil {
-		return nil
-	}
-	for i := 0; i < labelCount; i++ {
-		zs := k.APIConn.ZoneDomainIndex(currentDomain)
-		if z := k.findNested(zs, base); z != nil {
-			return z
+		nsrv := dnsutil.Join("ns.dns", zi.DomainName)
+		if len(zi.Object.NameServers) > 0 {
+			nsrv = dns.Fqdn(zi.Object.NameServers[0])
 		}
-
-		// dns.NextLabel finds the start of the next label.
-		// We use it to cut off the first label (e.g., cut 'www' from 'www.example.com.')
-		nextLabelOffset, _ := dns.NextLabel(currentDomain, 0)
-		currentDomain = currentDomain[nextLabelOffset:]
-	}
-	return nil
-}
-
-func (k *KubeDynDNS) findNested(zones []*objects.Zone, base *objects.Zone) *objects.Zone {
-	for i, zone := range zones {
-		for zone != nil {
-			if zone == base || zone.ParentRef == base.Name {
-				return zones[i]
-			}
-			if !dns.IsSubDomain(base.DomainName, zone.DomainName) || zone.ParentRef == "" {
-				zone = nil
-			} else {
-				zone = k.APIConn.GetZone(&cache.ObjectName{zone.Namespace, zone.ParentRef})
-			}
-		}
-	}
-	return nil
-}
-
-func (k *KubeDynDNS) SOA(ctx context.Context, z *objects.Zone, zone string, state request.Request) []dns.RR {
-	if z != nil {
-		ttl := uint32(min(z.MinimumTTL, 300))
-		header := dns.RR_Header{Name: z.DomainName, Rrtype: dns.TypeSOA, Ttl: ttl, Class: dns.ClassINET}
-
-		nsrv := dnsutil.Join("ns.dns", z.DomainName)
-		if len(z.NameServers) > 0 {
-			nsrv = dns.Fqdn(z.NameServers[0])
-		}
-		mbox := dnsutil.Join("hostmaster", z.DomainName)
-		if z.EMail != "" {
-			mbox = z.EMail
+		mbox := dnsutil.Join("hostmaster", zi.DomainName)
+		if zi.Object.EMail != "" {
+			mbox = zi.Object.EMail
 		}
 		soa := &dns.SOA{Hdr: header,
 			Mbox:    mbox,
 			Ns:      nsrv,
 			Serial:  k.Serial(state),
-			Refresh: uint32(z.Refresh),
-			Retry:   uint32(z.Retry),
-			Expire:  uint32(z.Expire),
+			Refresh: uint32(zi.Object.Refresh),
+			Retry:   uint32(zi.Object.Retry),
+			Expire:  uint32(zi.Object.Expire),
 			Minttl:  ttl,
 		}
 		return []dns.RR{soa}
 	} else {
-		recs, _ := plugin.SOA(ctx, k, zone, state, plugin.Options{})
-		return recs
+		minTTL := k.MinTTL(state)
+		ttl := min(minTTL, uint32(300))
+
+		header := dns.RR_Header{Name: zi.DomainName, Rrtype: dns.TypeSOA, Ttl: ttl, Class: dns.ClassINET}
+
+		Mbox := dnsutil.Join("hostmaster", zi.DomainName)
+		Ns := dnsutil.Join("ns.dns", zi.DomainName)
+
+		soa := &dns.SOA{Hdr: header,
+			Mbox:    Mbox,
+			Ns:      Ns,
+			Serial:  k.Serial(state),
+			Refresh: 7200,
+			Retry:   1800,
+			Expire:  86400,
+			Minttl:  minTTL,
+		}
+		return []dns.RR{soa}
 	}
 }
 
-func (k *KubeDynDNS) NS(nsrv, name string, ttl uint32, state request.Request) []dns.RR {
+func (k *KubeDynDNS) NS(nsrv, name string, ttl uint32) []dns.RR {
 	return []dns.RR{&dns.NS{Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: k.TTL(ttl)}, Ns: nsrv}}
-}
-
-// BackendError writes an error response to the client.
-func (k *KubeDynDNS) BackendError(ctx context.Context, zo *objects.Zone, zone string, rcode int, state request.Request, err error) (int, error) {
-	m := new(dns.Msg)
-	m.SetRcode(state.Req, rcode)
-	m.Authoritative = true
-	m.Ns = k.SOA(ctx, zo, zone, state)
-
-	state.W.WriteMsg(m)
-	// Return success as the rcode to signal we have written to the client.
-	return dns.RcodeSuccess, err
 }

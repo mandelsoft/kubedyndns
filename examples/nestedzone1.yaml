@@ -2,11 +2,11 @@
 kind: HostedZone
 apiVersion: coredns.mandelsoft.org/v1alpha1
 metadata:
-  name: nested-test
+  name: a-nested-test
   namespace: default
 spec:
   parentRef: test
-  domainName: nested
+  domainName: a.nested
   email: uwe.krueger@goldmail.de
   refresh: 7200
   retry: 3600

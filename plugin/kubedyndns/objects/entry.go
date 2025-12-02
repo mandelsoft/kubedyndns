@@ -227,7 +227,7 @@ func (e *Entry) Equal(b *Entry) bool {
 	if e.CNAME != b.CNAME {
 		return false
 	}
-	if e.Service.Service != "" {
+	if e.Service != nil && e.Service.Service != "" {
 		if len(e.Service.Records) != len(b.Service.Records) {
 			return false
 		}
