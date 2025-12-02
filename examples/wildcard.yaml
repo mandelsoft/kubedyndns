@@ -9,6 +9,6 @@ metadata:
 spec:
   zoneRef: test
   dnsNames:
-  - "*.ingress.test.mandelsoft.org"
+  - "*.ingress"
   A:
   - 8.8.4.4

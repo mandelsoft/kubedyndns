@@ -145,6 +145,7 @@ func parse(c *caddy.Controller) ([]*KubeDynDNS, error) {
 
 // ParseStanza parses a kubedyndns stanza
 func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
+	var err error
 
 	k8s := New([]string{""})
 
@@ -278,6 +279,19 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 			)
 			k8s.assureK8SConfig().ClientConfig = config
 			continue
+		case "transitive":
+			args := c.RemainingArgs()
+			switch len(args) {
+			case 0:
+				k8s.transitive = true
+			case 1:
+				k8s.transitive, err = strconv.ParseBool(args[0])
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, c.ArgErr()
+			}
 		default:
 			return nil, c.Errf("unknown property '%s'", c.Val())
 		}

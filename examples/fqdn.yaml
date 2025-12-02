@@ -4,9 +4,8 @@ metadata:
   name: demo
   namespace: default
 spec:
-  zoneRef: test
   dnsNames:
-  - demo
+  - demo.test.mandelsoft.org
   A:
   - 8.8.8.8
   TXT:

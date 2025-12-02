@@ -1,14 +1,14 @@
 kind: CoreDNSEntry
 apiVersion: coredns.mandelsoft.org/v1alpha1
 metadata:
-  name: demo
+  name: nested-demo
   namespace: default
 spec:
-  zoneRef: test
+  zoneRef: nested-test
   dnsNames:
   - demo
   A:
-  - 8.8.8.8
+  - 9.9.9.9
   TXT:
   - this is a test server
   SRV:

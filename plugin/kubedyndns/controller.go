@@ -148,7 +148,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
-		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client, opts.filtered, opts.zones...), nil),
+		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client), nil),
 	)
 
 	cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
@@ -309,8 +309,10 @@ func (cntr *controller) EntryDNSIndex(idx string) (entries []*objects.Entry) {
 	os, err := cntr.entryLister.ByIndex(DNSIndex, idx)
 	if err == nil && len(os) == 0 {
 		fields := dns.Split(idx)
-		idx = "*." + idx[fields[1]:]
-		os, err = cntr.entryLister.ByIndex(DNSIndex, idx)
+		if len(fields) > 1 {
+			idx = "*." + idx[fields[1]:]
+			os, err = cntr.entryLister.ByIndex(DNSIndex, idx)
+		}
 	}
 	return utils.ConvertSlice[*objects.Entry](os, err)
 }

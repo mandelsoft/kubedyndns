@@ -61,41 +61,26 @@ type Entry struct {
 	*object.Empty
 }
 
-// EntryKey returns a string using for the index.
-func EntryKey(obj *api.CoreDNSEntry) []string {
-	keys := []string{}
-	for _, k := range obj.Spec.DNSNames {
-		keys = append(keys, plugin.Name(k).Normalize())
+func normalizeHost(host, zone string) string {
+	if !strings.HasSuffix(host, ".") {
+		return plugin.Name(host).Normalize() + zone
 	}
-	return keys
+	return host
 }
 
-func normalizeRecords(namespace string, recs []api.SRVRecord, filtered bool, zones ...string) []api.SRVRecord {
+func normalizeRecords(recs []api.SRVRecord, zone string) []api.SRVRecord {
 	r := make([]api.SRVRecord, len(recs))
-	base := ""
-	if !filtered {
-		base = fmt.Sprintf("%s.%s", namespace, zones[0])
-	}
+
 	for i, v := range recs {
 		n := v
-		if !strings.HasSuffix(n.Host, ".") {
-			n.Host = plugin.Name(n.Host).Normalize() + base
-		}
+		n.Host = normalizeHost(n.Host, zone)
 		r[i] = n
 	}
 	return r
 }
 
-func normalizeHost(namespace string, name string, filtered bool, zones ...string) string {
-	base := ""
-	if !filtered {
-		base = fmt.Sprintf("%s.%s", namespace, zones[0])
-	}
-	return plugin.Name(name).Normalize() + base
-}
-
 // ToEntry returns a client specific converter for converting an api.CoreDNSEntry to a *Entry.
-func ToEntry(ctx context.Context, client clientapi.Interface, filtered bool, zones ...string) func(obj meta.Object) (meta.Object, error) {
+func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Object) (meta.Object, error) {
 	return func(obj meta.Object) (meta.Object, error) {
 		e, ok := obj.(*api.CoreDNSEntry)
 		if !ok {
@@ -108,13 +93,9 @@ func ToEntry(ctx context.Context, client clientapi.Interface, filtered bool, zon
 			ZoneRef:   e.Spec.ZoneRef,
 		}
 
-		base := ""
-		if !filtered {
-			base = fmt.Sprintf("%s.%s", e.Namespace, zones[0])
-		}
 		for _, n := range e.Spec.DNSNames {
-			fmt.Printf("cache %q\n", plugin.Name(n).Normalize()+base)
-			s.DNSNames = append(s.DNSNames, plugin.Name(n).Normalize()+base)
+			fmt.Printf("cache %q\n", plugin.Name(n).Normalize())
+			s.DNSNames = append(s.DNSNames, plugin.Name(n).Normalize())
 		}
 
 		var err error
@@ -140,20 +121,13 @@ func ToEntry(ctx context.Context, client clientapi.Interface, filtered bool, zon
 		s.AAAA, hosts = hosts, nil
 
 		if len(e.Spec.CNAME) > 0 {
-			host := plugin.Name(e.Spec.CNAME).Normalize()
-			if host != e.Spec.CNAME && !filtered {
-				host = host + base
-			}
-			s.CNAME = host
+			s.CNAME = e.Spec.CNAME
 		}
 
-		for _, n := range e.Spec.NS {
-			s.NS = append(s.NS, dns.Fqdn(n)+base)
-		}
 		set(&s.Text, e.Spec.TXT)
 		if e.Spec.SRV != nil {
 			s.Service = &api.ServiceSpec{Service: e.Spec.SRV.Service}
-			set(&s.Service.Records, normalizeRecords(e.Namespace, e.Spec.SRV.Records, filtered, zones...))
+			set(&s.Service.Records, slices.Clone(e.Spec.SRV.Records))
 		}
 
 		if len(e.Spec.DNSNames) == 0 {
@@ -280,7 +254,7 @@ func (s *Entry) serviceForHosts(defttl uint32, hosts ...string) []msg.Service {
 	return result
 }
 
-func (s *Entry) Services(t uint16, p string, defttl uint32) []msg.Service {
+func (s *Entry) Services(t uint16, p string, defttl uint32, zone string) []msg.Service {
 	if !s.Valid {
 		return nil
 	}
@@ -290,8 +264,8 @@ func (s *Entry) Services(t uint16, p string, defttl uint32) []msg.Service {
 		result = s.serviceForHosts(defttl, s.A...)
 		result = append(result, s.serviceForHosts(defttl, s.AAAA...)...)
 		result = append(result, s.serviceForHosts(defttl, s.CNAME)...)
-		result = append(result, s.Services(dns.TypeTXT, p, defttl)...)
-		result = append(result, s.Services(dns.TypeSRV, p, defttl)...)
+		result = append(result, s.Services(dns.TypeTXT, p, defttl, zone)...)
+		result = append(result, s.Services(dns.TypeSRV, p, defttl, zone)...)
 	case dns.TypeA:
 		result = s.serviceForHosts(defttl, s.A...)
 	case dns.TypeAAAA:
@@ -313,7 +287,7 @@ func (s *Entry) Services(t uint16, p string, defttl uint32) []msg.Service {
 			for _, h := range s.Service.Records {
 				if h.Protocol == p {
 					result = append(result, msg.Service{
-						Host:     h.Host,
+						Host:     normalizeHost(h.Host, zone),
 						Port:     h.Port,
 						Priority: h.Priority,
 						Weight:   h.Weight,
@@ -368,7 +342,11 @@ func (s *Entry) MatchType(t uint16) bool {
 	return false
 }
 
-func set(dst interface{}, src interface{}) {
+func set[E any](dst *[]E, src []E) {
+	*dst = slices.Clone(src)
+}
+
+func setx(dst interface{}, src interface{}) {
 	dv := reflect.ValueOf(dst)
 	if dv.Kind() != reflect.Ptr || dv.Type().Elem().Kind() != reflect.Slice {
 		panic(fmt.Sprintf("invalid slice target %T", dst))

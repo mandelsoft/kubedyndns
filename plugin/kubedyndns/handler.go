@@ -20,7 +20,6 @@ package kubedyndns
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/coredns/coredns/plugin"
@@ -63,18 +62,28 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 		err     error
 	)
 
-	dz, rs := k.findZone(zo, qname)
+	dz, rs, zn := k.findZone(zo, qname)
 	if rs != nil {
 		for _, r := range rs {
 			for _, s := range r.NS {
 				auth = append(auth, k.NS(s, qname, r.Ttl, state)...)
 			}
+			if len(auth) == 0 {
+				auth = append(auth, k.NS("ns."+qname, qname, r.Ttl, state)...)
+			}
 		}
 	} else {
 		if dz != nil {
 			if zo != dz {
-				for _, s := range dz.NameServers {
-					auth = append(auth, k.NS(s, qname, uint32(dz.MinimumTTL), state)...)
+				if k.transitive && !(state.QType() == dns.TypeNS && qname == zn) {
+					zo = dz
+				} else {
+					for _, s := range dz.NameServers {
+						auth = append(auth, k.NS(s, qname, uint32(dz.MinimumTTL), state)...)
+					}
+					if len(auth) == 0 {
+						auth = append(auth, k.NS("ns."+qname, qname, uint32(dz.MinimumTTL), state)...)
+					}
 				}
 			}
 		}
@@ -130,6 +139,11 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 				fake.Zone = state.Zone
 				_, _, err = plugin.A(ctx, k, zone, fake, nil, plugin.Options{})
 			}
+		} else {
+			if state.QType() == dns.TypeNS {
+				records = auth
+				auth = nil
+			}
 		}
 	}
 
@@ -153,7 +167,11 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 	m.Answer = append(m.Answer, records...)
 	m.Extra = append(m.Extra, extra...)
 	if len(m.Answer) == 0 {
-		m.Ns = k.SOA(ctx, zo, zone, state)
+		if len(auth) > 0 {
+			m.Ns = auth
+		} else {
+			m.Ns = k.SOA(ctx, zo, zone, state)
+		}
 	}
 
 	w.WriteMsg(m)
@@ -163,16 +181,19 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 // Name implements the Handler interface.
 func (k *KubeDynDNS) Name() string { return "kubernetes" }
 
-func (k *KubeDynDNS) findZone(base *objects.Zone, qname string) (*objects.Zone, []*objects.Entry) {
+func (k *KubeDynDNS) findZone(base *objects.Zone, qname string) (*objects.Zone, []*objects.Entry, string) {
 	qname = dns.Fqdn(qname)
 	sub := qname[:len(qname)-len(base.DomainName)]
 	labels := dns.SplitDomainName(sub)
 	cur := base.DomainName
+	rel := "."
 	for i := range labels {
-		cur = dnsutil.Join(labels[len(labels)-1-i], cur)
-		fmt.Printf("%s\n", cur)
+		l := labels[len(labels)-1-i]
+		cur = dnsutil.Join(l, cur)
+		rel = dnsutil.Join(l, rel)
+		log.Infof("lookup nested zone for %s/%s\n", cur, rel)
 		var ns []*objects.Entry
-		for _, e := range k.APIConn.EntryDNSIndex(cur) {
+		for _, e := range k.APIConn.EntryDNSIndex(rel) {
 			if e.ZoneRef == base.Name && e.Namespace == base.Namespace {
 				if len(e.NS) != 0 {
 					ns = append(ns, e)
@@ -180,16 +201,22 @@ func (k *KubeDynDNS) findZone(base *objects.Zone, qname string) (*objects.Zone, 
 			}
 		}
 		if ns != nil {
-			return nil, ns
+			log.Infof("found delegated zone for %s: %s<%s>\n", cur, ns[0].Name, rel)
+			return nil, ns, cur
 		}
-		for _, e := range k.APIConn.ZoneDomainIndex(cur) {
+		for _, e := range k.APIConn.ZoneDomainIndex(rel) {
 			if e.ParentRef == base.Name && e.Namespace == base.Namespace {
-				return e, nil
+				log.Infof("found nested zone for %s: %s<%s>\n", cur, e.Name, rel)
+				if !k.transitive {
+					return e, nil, cur
+				}
+				rel = "."
+				base = e
 			}
 		}
 	}
 
-	return base, nil
+	return base, nil, cur
 }
 
 func (k *KubeDynDNS) findMatchingZone(base *objects.Zone, qname string) *objects.Zone {

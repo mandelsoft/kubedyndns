@@ -117,7 +117,7 @@ func (s *Zone) DeepCopyObject() runtime.Object {
 		Namespace: s.Namespace,
 	}
 	set(&s1.NameServers, s.NameServers)
-	set(&s1.HostedZoneSpec, s.HostedZoneSpec)
+	s1.HostedZoneSpec = s.HostedZoneSpec
 	return s1
 }
 

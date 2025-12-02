@@ -3,7 +3,8 @@
   errors
   health
   ready
-  kubedyndns test {
+  kubedyndns test.mandelsoft.org {
+    mode FilterByZones
     kubeconfig secret/kubeconfig default
     fallthrough
     ttl 30

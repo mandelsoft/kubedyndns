@@ -6,7 +6,7 @@ metadata:
   namespace: default
 spec:
   parentRef: test
-  domainName: nested.test.mandelsoft.org
+  domainName: nested
   email: uwe.krueger@goldmail.de
   refresh: 7200
   retry: 3600

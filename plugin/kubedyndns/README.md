@@ -90,7 +90,7 @@ spec:
 
 The plugin supports multiple ways to interpret the settings in a core dns entry 
 object:
-* `FilterByZones`: dns names are filtered against the zones declared i the plugin block
+* `FilterByZones`: dns names are filtered against the zones declared in the plugin block
 * `Subdomains`: namespace and zone is used to complete the served dns names. Only
   one authoritative zone is possible.
 * `Primary`: the server acts as primary server of a single (specified)

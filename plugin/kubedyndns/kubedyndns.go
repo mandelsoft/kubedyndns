@@ -32,6 +32,7 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/fall"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 	"github.com/coredns/coredns/request"
+	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/objects"
 	"github.com/miekg/dns"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -64,6 +65,7 @@ type KubeDynDNS struct {
 	Next        plugin.Handler
 	Mode        string
 	Zones       []string
+	transitive  bool
 	ServedZones []string
 	Upstream    *upstream.Upstream
 	APIConn     Controller
@@ -218,7 +220,7 @@ func (k *KubeDynDNS) InitKubeCache(ctx context.Context) (err error) {
 	}
 
 	k.zones = k.ServedZones
-	k.filtered = k.Mode != MODE_SUBDOMAINS
+	k.filtered = k.Mode == MODE_FILTER
 
 	log.Infof("using mode %s(%s) %v", k.Mode, k.Zones[k.primaryZoneIndex], k.ServedZones)
 	k.APIConn = newController(ctx, kubeClient, apiClient, k.controlOpts)
@@ -245,8 +247,20 @@ func (k *KubeDynDNS) Records(ctx context.Context, state request.Request, exact b
 
 // findServices returns the services matching r from the cache.
 func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (services []msg.Service, err error) {
+	var entries []*objects.Entry
 
-	entries := k.APIConn.EntryDNSIndex(r.domain + "." + zone)
+	if k.filtered {
+		entries = k.APIConn.EntryDNSIndex(r.domain + "." + zone)
+		log.Infof("find (filtered) %s.%s -> %d entries", r.domain, zone, len(entries))
+	} else {
+		tmp := k.APIConn.EntryDNSIndex(r.domain + ".")
+		for _, e := range tmp {
+			if e.ZoneRef == k.zoneObject {
+				entries = append(entries, e)
+			}
+		}
+		log.Infof("find %s. -> %d entries -> %d in %s<%s>", r.domain, len(tmp), len(entries), k.zoneObject, zone)
+	}
 	if len(entries) == 0 {
 		return nil, errNoItems
 	}
@@ -254,7 +268,7 @@ func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (servic
 	if r.service != "" {
 		for _, e := range entries {
 			if e.Service.Service == r.service {
-				for _, s := range e.Services(t, r.protocol, k.ttl) {
+				for _, s := range e.Services(t, r.protocol, k.ttl, zone) {
 					services = append(services, s)
 				}
 			}
@@ -262,7 +276,7 @@ func (k *KubeDynDNS) findEntries(r recordRequest, zone string, t uint16) (servic
 	} else {
 		for _, e := range entries {
 			if e.MatchType(t) {
-				services = append(services, e.Services(t, "", k.ttl)...)
+				services = append(services, e.Services(t, "", k.ttl, zone)...)
 			}
 		}
 	}
