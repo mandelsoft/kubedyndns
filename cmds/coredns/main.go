@@ -19,6 +19,8 @@
 package main
 
 import (
+	"slices"
+
 	_ "github.com/coredns/coredns/core/plugin"
 
 	_ "github.com/mandelsoft/kubedyndns/plugin/kubedyndns"
@@ -31,8 +33,14 @@ var directives = []string{
 	"kubedyndns",
 }
 
+const position = "header"
+
 func init() {
-	dnsserver.Directives = append(dnsserver.Directives, directives...)
+	idx := slices.Index(dnsserver.Directives, position)
+	if idx < 0 {
+		idx = len(dnsserver.Directives) - 1
+	}
+	dnsserver.Directives = append(append(slices.Clone(dnsserver.Directives[:idx+1]), directives...), dnsserver.Directives[idx+2:]...)
 }
 
 func main() {

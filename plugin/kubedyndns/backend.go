@@ -153,7 +153,7 @@ func (k *Backend) Records(ctx context.Context, state request.Request, exact bool
 		return nil, errNoItems
 	}
 
-	if r.service != "" && state.QType() != dns.TypeSRV {
+	if r.IsServiceRequest() != (state.QType() == dns.TypeSRV) {
 		return nil, errNoItems
 	}
 	services, err := k.findEntries(r, state.QType())
@@ -161,7 +161,7 @@ func (k *Backend) Records(ctx context.Context, state request.Request, exact bool
 }
 
 // findServices returns the services matching r from the cache.
-func (k *Backend) findEntries(r recordRequest, t uint16) (services []msg.Service, err error) {
+func (k *Backend) findEntries(r *recordRequest, t uint16) (services []msg.Service, err error) {
 	var entries []*objects.Entry
 
 	zi := k.zoneInfo
@@ -181,7 +181,7 @@ func (k *Backend) findEntries(r recordRequest, t uint16) (services []msg.Service
 		return nil, errNoItems
 	}
 
-	if r.service != "" {
+	if r.service != "" && r.service != "any" && r.service != "all" {
 		for _, e := range entries {
 			if e.Service.Service == r.service {
 				for _, s := range e.Services(t, r.protocol, k.ttl, zi.DomainName) {

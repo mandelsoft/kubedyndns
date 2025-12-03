@@ -36,35 +36,42 @@ type recordRequest struct {
 	domain string
 }
 
+func (r *recordRequest) IsServiceRequest() bool {
+	return r.service != ""
+}
+
 // parseRequest parses the qname to find all the elements we need for querying k8s. Anything
 // that is not parsed will be empty.
 // Potential underscores are stripped from _port and _protocol.
-func parseRequest(name, zone string) (r recordRequest, err error) {
-	// 2 Possible cases:
-	// 1. _port._protocol.<path>.zone
-	// 2. <path>.zone
+func parseRequest(name, zone string) (*recordRequest, error) {
+	// 23Possible cases:
+	// 1. _service._protocol.<path>.zone
+	// 3. <path>.zone
 
 	base, _ := dnsutil.TrimZone(name, zone)
 	segs := dns.SplitDomainName(base)
 	last := len(segs) - 1
 	if last < 0 {
-		return r, nil
+		return nil, errInvalidRequest
 	}
 	// return NODATA for apex queries
 	if segs[0] == "_tcp" || segs[0] == "_upd" {
-		return r, errInvalidRequest
+		return nil, errInvalidRequest
 	}
 
+	r := &recordRequest{domain: base}
 	for i, s := range segs {
 		if s == "_tcp" || s == "_udp" {
-			r.service = strings.Join(segs[0:i], ".")
+			r.service = stripUnderscore(strings.Join(segs[0:i], "."))
 			r.domain = strings.Join(segs[i+1:], ".")
 			r.protocol = strings.ToUpper(stripUnderscore(s))
-			return
+			break
 		}
 	}
 
-	r.domain = base
+	if r.service == "" && r.protocol != "" {
+		return nil, errInvalidRequest
+	}
 	return r, nil
 }
 
@@ -78,7 +85,7 @@ func stripUnderscore(s string) string {
 
 // String returns a string representation of r, it just returns all fields concatenated with dots.
 // This is mostly used in tests.
-func (r recordRequest) String() string {
+func (r *recordRequest) String() string {
 	s := r.service
 	s += "/" + r.protocol
 	s += "/" + r.domain

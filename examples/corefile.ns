@@ -3,7 +3,8 @@
   errors
   health
   ready
-  kubedyndns test.mandelsoft.org {
+  cache 30
+  kubedyndns . {
     mode Primary
     zoneobject test
     namespaces default
@@ -12,5 +13,4 @@
     ttl 30
   }
   forward . /etc/resolv.conf
-  cache 30
 }

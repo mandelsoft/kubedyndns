@@ -285,7 +285,7 @@ func (s *Entry) Services(t uint16, p string, defttl uint32, zone string) []msg.S
 	case dns.TypeSRV:
 		if s.Service.Service != "" {
 			for _, h := range s.Service.Records {
-				if h.Protocol == p {
+				if h.Protocol == p || p == "" {
 					result = append(result, msg.Service{
 						Host:     normalizeHost(h.Host, zone),
 						Port:     h.Port,
@@ -300,6 +300,11 @@ func (s *Entry) Services(t uint16, p string, defttl uint32, zone string) []msg.S
 		}
 	}
 	return result
+}
+
+func encodeOwner(rec *api.SRVRecord, name, zone string) string {
+	host := normalizeHost(rec.Host, zone)
+	return fmt.Sprintf("_%s._%s.%s", name, strings.ToLower(rec.Protocol), host)
 }
 
 // GetNamespace implements the metav1.Object interface.
