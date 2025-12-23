@@ -2,7 +2,7 @@ ARG TARGETS=dev
 ARG NAME=coredns
 
 #############      builder       #############
-FROM golang:1.14.2 AS builder
+FROM golang:1.24.2 AS builder
 ARG TARGETS
 
 WORKDIR /go/src/github.com/mandelsoft/kubedyndns
@@ -13,8 +13,12 @@ RUN make $TARGETS
 #############      certs     #############
 FROM debian:stable-slim AS certs
 
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN echo "deb http://deb.debian.org/debian stable main" > /etc/apt/sources.list
 RUN apt-get update && apt-get -uy upgrade
-RUN apt-get -y install ca-certificates && update-ca-certificates
+RUN apt-get -y --no-install-recommends install ca-certificates && update-ca-certificates
+#RUN apt-get -y install ca-certificates && update-ca-certificates
 
 #############      image     #############
 FROM scratch AS image

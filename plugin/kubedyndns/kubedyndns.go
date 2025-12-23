@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/coredns/coredns/plugin"
@@ -37,6 +38,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/util/cert"
 
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 )
@@ -47,6 +49,7 @@ const MODE_PRIMARY = "Primary"
 
 type K8SConfig struct {
 	APIServerList []string
+	APIToken      string
 	APICertAuth   string
 	APIClientCert string
 	APIClientKey  string
@@ -70,8 +73,7 @@ type KubeDynDNS struct {
 	ttl         uint32
 	k8s         *K8SConfig
 	controlOpts
-	primaryZoneIndex int
-	localIPs         []net.IP
+	localIPs []net.IP
 }
 
 // New returns a initialized Kubernetes. It default interfaceAddrFunc to return 127.0.0.1. All other
@@ -107,10 +109,16 @@ var (
 	errInvalidRequest = errors.New("invalid query name")
 )
 
-// primaryZone will return the first non-reverse zone being handled by this plugin
-func (k *KubeDynDNS) primaryZone() string { return k.Zones[k.primaryZoneIndex] }
-
 func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
+	if k != nil {
+		if k.ClientConfig != nil && k.APIToken != "" {
+			return nil, fmt.Errorf("only API token or kubeconfig")
+		}
+		if k.APIToken != "" && len(k.APIServerList) == 0 {
+			return nil, fmt.Errorf("API token requires API server")
+		}
+	}
+
 	if k != nil && k.ClientConfig != nil {
 		return k.ClientConfig.ClientConfig()
 	}
@@ -130,6 +138,13 @@ func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
 		return cc, err
 	}
 
+	if k.APIToken != "" {
+		cfg, err := TokenConfig(k.APIServerList[0], k.APIToken, k.APIClientCert)
+		if err != nil {
+			return nil, err
+		}
+		return cfg, nil
+	}
 	// Connect to API from out of cluster
 	// Only the first one is used. We will deprecate multiple endpoints later.
 	clusterinfo.Server = k.APIServerList[0]
@@ -182,10 +197,7 @@ func (k *KubeDynDNS) InitKubeCache(ctx context.Context) (err error) {
 		k.k8s.selector = selector
 	}
 
-	k.zones = k.ServedZones
-	k.filtered = k.Mode == MODE_FILTER
-
-	log.Infof("using mode %s(%s) %v", k.Mode, k.Zones[k.primaryZoneIndex], k.ServedZones)
+	log.Infof("using mode %s: %v", k.Mode, k.ServedZones)
 	k.APIConn = newController(ctx, kubeClient, apiClient, k.controlOpts)
 
 	return err
@@ -244,3 +256,38 @@ func (k *KubeDynDNS) Serial(state request.Request) uint32 { return uint32(k.APIC
 
 // MinTTL returns the minimal TTL.
 func (k *KubeDynDNS) MinTTL(state request.Request) uint32 { return k.ttl }
+
+func TokenConfig(server, tokenFile, rootCAFile string) (*rest.Config, error) {
+	const (
+		def_tokenFile  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+		def_rootCAFile = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	)
+
+	if tokenFile == "" {
+		tokenFile = def_tokenFile
+	}
+	if rootCAFile == "" {
+		rootCAFile = def_rootCAFile
+	}
+
+	token, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsClientConfig := rest.TLSClientConfig{}
+
+	if _, err := cert.NewPool(rootCAFile); err != nil {
+		return nil, err
+	} else {
+		tlsClientConfig.CAFile = rootCAFile
+	}
+
+	return &rest.Config{
+		// TODO: switch to using cluster DNS.
+		Host:            server,
+		TLSClientConfig: tlsClientConfig,
+		BearerToken:     string(token),
+		BearerTokenFile: tokenFile,
+	}, nil
+}

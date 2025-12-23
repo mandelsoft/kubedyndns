@@ -20,9 +20,9 @@ package kubedyndns
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +33,7 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/dnsutil"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
+	"github.com/pkg/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"  // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc" // pull this in here, because we want it excluded if plugin.cfg doesn't have k8s
@@ -142,6 +143,7 @@ func parse(c *caddy.Controller) ([]*KubeDynDNS, error) {
 			singleton = "using at least one instance for all namespaces"
 		}
 		kc = k8s.assureK8SConfig()
+		k8s.filtered = k8s.Mode == MODE_FILTER
 		r = append(r, k8s)
 	}
 	if singleton != "" && len(r) > 1 {
@@ -170,19 +172,11 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 		}
 	}
 
-	k8s.primaryZoneIndex = -1
-	for i, z := range k8s.Zones {
+	for _, z := range k8s.Zones {
 		if dnsutil.IsReverse("."+z) > 0 {
 			continue
 		}
 		k8s.ServedZones = append(k8s.ServedZones, z)
-		if k8s.primaryZoneIndex < 0 {
-			k8s.primaryZoneIndex = i
-		}
-	}
-
-	if k8s.primaryZoneIndex == -1 {
-		return nil, errors.New("non-reverse zone name must be used")
 	}
 
 	k8s.Upstream = upstream.New()
@@ -235,6 +229,28 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 				continue
 			}
 			return nil, c.ArgErr()
+		case "token":
+			args := c.RemainingArgs()
+			switch len(args) {
+			case 2:
+				k8s.assureK8SConfig().APICertAuth = args[1]
+				k8s.assureK8SConfig().APIToken = args[0]
+			case 1:
+				if isDirectory(args[0]) {
+					if fileExists(filepath.Join(args[0], "token")) {
+						k8s.assureK8SConfig().APIToken = filepath.Join(args[0], "token")
+					} else {
+						return nil, c.Errf("no token file found")
+					}
+					if fileExists(filepath.Join(args[0], "ca.crt")) {
+						k8s.assureK8SConfig().APIClientCert = filepath.Join(args[0], "ca.crt")
+					}
+				} else {
+					k8s.assureK8SConfig().APIToken = args[0]
+				}
+			default:
+				return nil, c.ArgErr()
+			}
 		case "tls": // cert key cacertfile
 			args := c.RemainingArgs()
 			if len(args) == 3 {
@@ -339,4 +355,26 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 		}
 	}
 	return k8s, nil
+}
+
+func isDirectory(path string) bool {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+
+	return fileInfo.IsDir()
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true // File exists
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false // File specifically does not exist
+	}
+	// The file might exist, but we have a permission error
+	// or another issue. In most cases, you treat this as false.
+	return false
 }

@@ -100,7 +100,6 @@ type controller struct {
 
 type controlOpts struct {
 	zoneObject string
-	zones      []string
 	filtered   bool
 	namespaces map[string]struct{}
 
