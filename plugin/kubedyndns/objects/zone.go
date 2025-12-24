@@ -26,6 +26,7 @@ import (
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/miekg/dns"
+	meta2 "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -85,23 +86,30 @@ func ToZone(ctx context.Context, client clientapi.Interface) func(obj meta.Objec
 			}
 		}
 
+		mod := false
 		if err != nil {
 			s.Valid = false
-			if e.Status.Message != err.Error() || e.Status.State != "Invalid" {
-				e.Status.Message = err.Error()
-				e.Status.State = "Invalid"
-				_, err = client.CorednsV1alpha1().HostedZones(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
-			} else {
-				err = nil
-			}
+			mod = meta2.SetStatusCondition(&e.Status.Conditions, meta.Condition{
+				Type:               api.ServerConditionType,
+				Status:             meta.ConditionFalse,
+				ObservedGeneration: e.ObjectMeta.Generation,
+				Reason:             api.ReasonServerValidationFailure,
+				Message:            err.Error(),
+			})
 		} else {
 			s.Valid = true
-			if e.Status.Message != "" || e.Status.State != "Ok" {
-				e.Status.Message = ""
-				e.Status.State = "Ok"
-				_, err = client.CorednsV1alpha1().HostedZones(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
-			}
+			mod = meta2.SetStatusCondition(&e.Status.Conditions, meta.Condition{
+				Type:               api.ServerConditionType,
+				Status:             meta.ConditionTrue,
+				ObservedGeneration: e.ObjectMeta.Generation,
+				Reason:             api.ReasonServerActive,
+				Message:            "hosted zone served",
+			})
 		}
+		if mod {
+			_, err = client.CorednsV1alpha1().HostedZones(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
+		}
+
 		if err != nil {
 			Log.Errorf("error updating zone status %s/%s: %s", e.Namespace, e.Name, err)
 		}
