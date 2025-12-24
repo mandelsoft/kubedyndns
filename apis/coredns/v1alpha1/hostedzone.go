@@ -127,7 +127,7 @@ type HostedZoneStatus struct {
 // +kubebuilder:storageversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=chz,path=hostedzones,singular=hostedzone
+// +kubebuilder:resource:scope=Namespaced,shortName=chz,path=hostedzones,singular=hostedzone,categories=dns
 // +kubebuilder:printcolumn:name=Domain,JSONPath=".spec.domainName",type=string
 // +kubebuilder:printcolumn:name=Parent,JSONPath=".spec.parentRef",type=string
 // +kubebuilder:printcolumn:name=EMail,JSONPath=".spec.email",type=string
@@ -141,6 +141,7 @@ type HostedZoneStatus struct {
 // +kubebuilder:printcolumn:name=Message,JSONPath=".status.message",type=string,priority=1
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:rbac:groups=coredns.mandelsoft.org,resources=hostedzones,verbs=get;list;watch;create;update;patch;delete,labels=rbac.authorization.k8s.io/aggregate-to-admin=true
 
 // HostedZone is the Schema for the hostedzones API
 type HostedZone struct {

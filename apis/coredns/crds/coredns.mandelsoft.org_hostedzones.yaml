@@ -8,11 +8,11 @@ metadata:
 spec:
   group: coredns.mandelsoft.org
   names:
+    categories:
+    - all
     kind: HostedZone
     listKind: HostedZoneList
     plural: hostedzones
-    shortNames:
-    - chz
     singular: hostedzone
   scope: Namespaced
   versions:

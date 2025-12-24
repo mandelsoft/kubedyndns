@@ -243,7 +243,7 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 						return nil, c.Errf("no token file found")
 					}
 					if fileExists(filepath.Join(args[0], "ca.crt")) {
-						k8s.assureK8SConfig().APIClientCert = filepath.Join(args[0], "ca.crt")
+						k8s.assureK8SConfig().APICertAuth = filepath.Join(args[0], "ca.crt")
 					}
 				} else {
 					k8s.assureK8SConfig().APIToken = args[0]

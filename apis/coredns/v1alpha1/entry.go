@@ -34,7 +34,7 @@ type CoreDNSEntryList struct {
 
 // +kubebuilder:storageversion
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=corednsentry
+// +kubebuilder:resource:scope=Namespaced,shortName=cdnse,path=corednsentries,singular=corednsentry,categories=dns
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name=DNSNames,JSONPath=".spec.dnsNames",type=string
 // +kubebuilder:printcolumn:name=ZoneRef,JSONPath=".spec.zoneRef",type=string

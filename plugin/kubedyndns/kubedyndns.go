@@ -110,6 +110,7 @@ var (
 )
 
 func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
+	log.Infof("retrieving Kubernetes client config")
 	if k != nil {
 		if k.ClientConfig != nil && k.APIToken != "" {
 			return nil, fmt.Errorf("only API token or kubeconfig")
@@ -120,6 +121,7 @@ func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
 	}
 
 	if k != nil && k.ClientConfig != nil {
+		log.Infof("using explicit config")
 		return k.ClientConfig.ClientConfig()
 	}
 	loadingRules := &clientcmd.ClientConfigLoadingRules{}
@@ -139,7 +141,7 @@ func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
 	}
 
 	if k.APIToken != "" {
-		cfg, err := TokenConfig(k.APIServerList[0], k.APIToken, k.APIClientCert)
+		cfg, err := TokenConfig(k.APIServerList[0], k.APIToken, k.APICertAuth)
 		if err != nil {
 			return nil, err
 		}
