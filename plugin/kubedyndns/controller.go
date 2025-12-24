@@ -143,7 +143,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 	}
 
 	cntr.entryLister, cntr.entryController = object.NewIndexerInformer(
-		filterListWatch(cntr.client, entryListFunc, entryWatchFunc, cntr.selector, corev1.NamespaceAll),
+		filterListWatch(cntr.client, entryListFunc, entryWatchFunc, cntr.selector, keys(opts.namespaces)...),
 		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
@@ -151,7 +151,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 	)
 
 	cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
-		filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, corev1.NamespaceAll),
+		filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, keys(opts.namespaces)...),
 		&api.HostedZone{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{ZoneIndex: zoneIndexFunc, ZoneParentIndex: zoneParentIndexFunc},
@@ -159,6 +159,14 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 	)
 
 	return &cntr
+}
+
+func keys(namespaces map[string]struct{}) []string {
+	var result []string
+	for k := range namespaces {
+		result = append(result, k)
+	}
+	return result
 }
 
 ////////////////////////////////////////////////////////////////////////////////
