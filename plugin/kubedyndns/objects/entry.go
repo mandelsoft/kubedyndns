@@ -46,7 +46,7 @@ type Entry struct {
 	Name      string
 	Namespace string
 	ZoneRef   string
-	Valid     bool
+	Error     error
 	Ttl       uint32
 	DNSNames  []string
 
@@ -58,7 +58,12 @@ type Entry struct {
 	NS      []string
 	Service *api.ServiceSpec
 
+	Status api.CoreDNSStatus
 	*object.Empty
+}
+
+func (e *Entry) GetType() string {
+	return TYPE_ENTRY
 }
 
 func normalizeHost(host, zone string) string {
@@ -92,13 +97,15 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 			Namespace: e.GetNamespace(),
 			ZoneRef:   e.Spec.ZoneRef,
 		}
+		e.Status.DeepCopyInto(&s.Status)
+
+		var err error
 
 		for _, n := range e.Spec.DNSNames {
 			fmt.Printf("cache %q\n", plugin.Name(n).Normalize())
 			s.DNSNames = append(s.DNSNames, plugin.Name(n).Normalize())
 		}
 
-		var err error
 		var hosts []string
 		for _, ips := range e.Spec.A {
 			ip := net.ParseIP(ips)
@@ -133,7 +140,7 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 		if len(e.Spec.DNSNames) == 0 {
 			err = fmt.Errorf("at least one DNS name is required")
 		}
-		if len(e.Spec.A) == 0 && len(e.Spec.AAAA) == 0 && len(e.Spec.CNAME) == 0 && len(e.Spec.NS) == 0 && (e.Spec.SRV == nil || len(e.Spec.SRV.Records) == 0) {
+		if len(e.Spec.A) == 0 && len(e.Spec.AAAA) == 0 && len(e.Spec.CNAME) == 0 && len(e.Spec.TXT) == 0 && len(e.Spec.NS) == 0 && (e.Spec.SRV == nil || len(e.Spec.SRV.Records) == 0) {
 			err = fmt.Errorf("no record defined")
 		}
 		if e.Spec.SRV != nil {
@@ -152,26 +159,7 @@ func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Obje
 				}
 			}
 		}
-		if err != nil {
-			s.Valid = false
-			if e.Status.Message != err.Error() || e.Status.State != "Invalid" {
-				e.Status.Message = err.Error()
-				e.Status.State = "Invalid"
-				_, err = client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
-			} else {
-				err = nil
-			}
-		} else {
-			s.Valid = true
-			if e.Status.Message != "" || e.Status.State != "Ok" {
-				e.Status.Message = ""
-				e.Status.State = "Ok"
-				_, err = client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
-			}
-		}
-		if err != nil {
-			Log.Errorf("error updating entry status %s/%s: %s", e.Namespace, e.Name, err)
-		}
+		s.Error = err
 		*e = api.CoreDNSEntry{}
 
 		return s, nil
@@ -255,7 +243,7 @@ func (s *Entry) serviceForHosts(defttl uint32, hosts ...string) []msg.Service {
 }
 
 func (s *Entry) Services(t uint16, p string, defttl uint32, zone string) []msg.Service {
-	if !s.Valid {
+	if s.Error != nil {
 		return nil
 	}
 	var result []msg.Service
@@ -378,3 +366,47 @@ func DefTTL(ttl, def uint32) uint32 {
 }
 
 const coredns = "c" // used as a fake key prefix in msg.Service
+
+func (e *Entry) UpdateStatus(ctx context.Context, client clientapi.Interface, zn string, names []string, err error) error {
+	var o api.CoreDNSEntry
+	o.ResourceVersion = e.GetResourceVersion()
+	o.Name = e.GetName()
+	o.Namespace = e.GetNamespace()
+	e.Status.DeepCopyInto(&o.Status)
+	mod := false
+
+	if o.Status.RootZone != zn {
+		mod = true
+		o.Status.RootZone = zn
+	}
+	if !slices.Equal(o.Status.EffectiveDomainNames, names) {
+		mod = true
+		o.Status.EffectiveDomainNames = names
+	}
+	if e.Error != nil {
+		err = e.Error
+	}
+	if err != nil {
+		if o.Status.Message != err.Error() || o.Status.State != "Invalid" {
+			o.Status.Message = err.Error()
+			o.Status.State = "Invalid"
+			mod = true
+		}
+	} else {
+		if o.Status.Message != "" || o.Status.State != "Ok" {
+			mod = true
+			o.Status.Message = ""
+			o.Status.State = "Ok"
+		}
+	}
+	if mod {
+		_, err := client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, &o, meta.UpdateOptions{})
+		if err != nil {
+			Log.Errorf("error updating entry status %s/%s: %s", o.Namespace, o.Name, err)
+		} else {
+			Log.Infof("entry status %s/%s updated: %#v", o.Namespace, o.Name, o.Status)
+		}
+		return err
+	}
+	return nil
+}

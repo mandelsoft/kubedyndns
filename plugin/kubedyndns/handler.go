@@ -55,7 +55,11 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 	if zone == "" {
 		return plugin.NextOrFailure(k.Name(), k.Next, ctx, w, in)
 	}
-	zo := k.APIConn.GetZone(k.zoneRef)
+
+	var zo *objects.Zone
+	if k.zoneRef != nil {
+		zo = k.APIConn.GetZone(*k.zoneRef)
+	}
 
 	var zones []string
 	if zone == "." {
@@ -102,7 +106,7 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 					zi = dz
 					state.Zone = zn
 				} else {
-					for _, s := range dz.Object.NameServers {
+					for _, s := range dz.Object.Status.NameServers {
 						auth = append(auth, k.NS(s, qname, uint32(dz.Object.MinimumTTL))...)
 					}
 					if len(auth) == 0 {
@@ -169,7 +173,7 @@ func (k *KubeDynDNS) findZone(zi *ZoneInfo, qname string) (*ZoneInfo, []*objects
 		l := labels[len(labels)-1-i]
 		cur = dnsutil.Join(l, cur)
 		rel = dnsutil.Join(l, rel)
-		log.Infof("lookup nested zone for %s/%s\n", cur, rel)
+		Log.Infof("lookup nested zone for %s/%s\n", cur, rel)
 		var ns []*objects.Entry
 		for _, e := range k.APIConn.EntryDNSIndex(rel) {
 			if zi.Match(e.ZoneRef, e) {
@@ -181,12 +185,12 @@ func (k *KubeDynDNS) findZone(zi *ZoneInfo, qname string) (*ZoneInfo, []*objects
 			}
 		}
 		if ns != nil {
-			log.Infof("found delegated zone for %s: %s<%s>\n", cur, ns[0].Name, rel)
+			Log.Infof("found delegated zone for %s: %s<%s>\n", cur, ns[0].Name, rel)
 			return nil, ns, cur
 		}
 		for _, e := range k.APIConn.ZoneDomainIndex(rel) {
 			if zi.Match(e.ParentRef, e) {
-				log.Infof("found nested zone for %s: %s<%s>\n", cur, e.Name, rel)
+				Log.Infof("found nested zone for %s: %s<%s>\n", cur, e.Name, rel)
 				zn = cur
 				rel = "."
 				zi = NewZoneInfo(zn, e)
@@ -207,8 +211,8 @@ func (k *KubeDynDNS) SOA(ctx context.Context, zi *ZoneInfo, state request.Reques
 		header := dns.RR_Header{Name: zi.DomainName, Rrtype: dns.TypeSOA, Ttl: ttl, Class: dns.ClassINET}
 
 		nsrv := dnsutil.Join("ns.dns", zi.DomainName)
-		if len(zi.Object.NameServers) > 0 {
-			nsrv = dns.Fqdn(zi.Object.NameServers[0])
+		if len(zi.Object.Status.NameServers) > 0 {
+			nsrv = dns.Fqdn(zi.Object.Status.NameServers[0])
 		}
 		mbox := dnsutil.Join("hostmaster", zi.DomainName)
 		if zi.Object.EMail != "" {

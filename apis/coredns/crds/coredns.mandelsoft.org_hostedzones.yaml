@@ -9,15 +9,17 @@ spec:
   group: coredns.mandelsoft.org
   names:
     categories:
-    - all
+    - dns
     kind: HostedZone
     listKind: HostedZoneList
     plural: hostedzones
+    shortNames:
+    - chz
     singular: hostedzone
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.domainName
+    - jsonPath: .spec.domainNames
       name: Domain
       type: string
     - jsonPath: .spec.parentRef

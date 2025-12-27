@@ -8,6 +8,8 @@ metadata:
 spec:
   group: coredns.mandelsoft.org
   names:
+    categories:
+    - dns
     kind: CoreDNSEntry
     listKind: CoreDNSEntryList
     plural: corednsentries
@@ -130,8 +132,21 @@ spec:
           status:
             description: CoreDNSStatus describes the status of an entry
             properties:
+              effectiveDomainNames:
+                description: |-
+                  EffectiveDomainNames are set in primary mode
+                  to report the effective doamin names aggregated
+                  along the hosted zones up to the served root zone
+                items:
+                  type: string
+                type: array
               message:
                 description: Error message in case of an invalid entry
+                type: string
+              rootZone:
+                description: |-
+                  RootZone is the zone of the primary dns server
+                  feeling responsible
                 type: string
               state:
                 description: State of the dns entry object

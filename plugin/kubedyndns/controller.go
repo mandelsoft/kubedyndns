@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/utils"
 	"github.com/miekg/dns"
+	"k8s.io/client-go/util/workqueue"
 
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
@@ -44,11 +46,14 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-const (
-	DNSIndex = "dns"
-	IPIndex  = "ip"
+const WORKER_NO = 1
 
-	ZoneIndex       = "zone"
+const (
+	EntryDomainIndex = "dns"
+	EntryIPIndex     = "ip"
+	EntryZoneIndex   = "zoneref"
+
+	ZoneDomainIndex = "zone"
 	ZoneParentIndex = "parent"
 )
 
@@ -57,9 +62,9 @@ type Controller interface {
 	EntryDNSIndex(string) []*objects.Entry
 	EntryIPIndex(idx string) []*objects.Entry
 
-	GetZone(name *cache.ObjectName) *objects.Zone
+	GetZone(name cache.ObjectName) *objects.Zone
 	ZoneDomainIndex(idx string) []*objects.Zone
-	ZoneParentIndex(idx string) []*objects.Zone
+	ZoneParentIndex(name cache.ObjectName) []*objects.Zone
 
 	Run()
 	HasSynced() bool
@@ -70,6 +75,10 @@ type Controller interface {
 }
 
 type controller struct {
+	ctx     context.Context
+	queue   workqueue.TypedRateLimitingInterface[RequestKey]
+	workers sync.WaitGroup
+
 	// Modified tracks timestamp of the most recent changes
 	// It needs to be first because it is guaranteed to be 8-byte
 	// aligned ( we use sync.LoadAtomic with this )
@@ -94,7 +103,6 @@ type controller struct {
 	shutdown bool
 	stopCh   chan struct{}
 
-	zones []string
 	*controlOpts
 }
 
@@ -133,9 +141,39 @@ func filterListWatch(
 	}, f)
 }
 
+type RequestKey struct {
+	Kind      string
+	Namespace string
+	Name      string
+}
+
+func NewRequestKey(kind string, namespace string, name string) RequestKey {
+	return RequestKey{
+		Kind:      kind,
+		Namespace: namespace,
+		Name:      name,
+	}
+}
+
+func NewRequestKeyForObject(obj objects.Object) RequestKey {
+	return RequestKey{
+		Kind:      obj.GetType(),
+		Namespace: obj.GetNamespace(),
+		Name:      obj.GetName(),
+	}
+}
+
+func (k RequestKey) String() string {
+	return fmt.Sprintf("%s/%s/%s", k.Kind, k.Namespace, k.Name)
+}
+
 // newController creates a controller for CoreDNS.
 func newController(ctx context.Context, kubeClient kubernetes.Interface, client clientapi.Interface, opts controlOpts) *controller {
 	cntr := controller{
+		ctx: ctx,
+		queue: workqueue.NewTypedRateLimitingQueue[RequestKey](
+			workqueue.DefaultTypedControllerRateLimiter[RequestKey](),
+		),
 		kubeclient:  kubeClient,
 		client:      client,
 		stopCh:      make(chan struct{}),
@@ -146,17 +184,20 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		filterListWatch(cntr.client, entryListFunc, entryWatchFunc, cntr.selector, keys(opts.namespaces)...),
 		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
-		cache.Indexers{DNSIndex: entryDNSIndexFunc, IPIndex: entryIPIndexFunc},
+		cache.Indexers{EntryDomainIndex: entryDNSIndexFunc, EntryIPIndex: entryIPIndexFunc, EntryZoneIndex: entryZoneIndexFunc},
 		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client), nil),
 	)
 
-	cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
-		filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, keys(opts.namespaces)...),
-		&api.HostedZone{},
-		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
-		cache.Indexers{ZoneIndex: zoneIndexFunc, ZoneParentIndex: zoneParentIndexFunc},
-		object.DefaultProcessor(objects.ToZone(ctx, cntr.client), nil),
-	)
+	if cntr.zoneRef != nil {
+		Log.Info("handling zone %s", cntr.zoneRef.String())
+		cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
+			filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, keys(opts.namespaces)...),
+			&api.HostedZone{},
+			cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
+			cache.Indexers{ZoneDomainIndex: zoneIndexFunc, ZoneParentIndex: zoneParentIndexFunc},
+			object.DefaultProcessor(objects.ToZone(ctx, cntr.client, cntr.zoneRef == nil), nil),
+		)
+	}
 
 	return &cntr
 }
@@ -171,12 +212,23 @@ func keys(namespaces map[string]struct{}) []string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func entryZoneIndexFunc(obj interface{}) ([]string, error) {
+	e, ok := obj.(*objects.Entry)
+	if !ok {
+		return nil, errObj
+	}
+	if e.ZoneRef == "" {
+		return nil, nil
+	}
+	return []string{e.Namespace + "/" + e.ZoneRef}, nil
+}
+
 func entryDNSIndexFunc(obj interface{}) ([]string, error) {
 	e, ok := obj.(*objects.Entry)
 	if !ok {
 		return nil, errObj
 	}
-	log.Infof("found entry %s/%s -> %v\n", e.Name, e.Namespace, e.DNSNames)
+	Log.Infof("found entry %s/%s -> %v\n", e.Name, e.Namespace, e.DNSNames)
 	return e.DNSNames, nil
 }
 
@@ -217,7 +269,7 @@ func zoneIndexFunc(obj interface{}) ([]string, error) {
 	if !ok {
 		return nil, errObj
 	}
-	log.Infof("found zone %s/%s -> %v\n", e.Name, e.Namespace, e.DomainNames)
+	Log.Infof("found zone %s/%s -> %v\n", e.Name, e.Namespace, e.DomainNames)
 	return e.DomainNames, nil
 }
 
@@ -226,7 +278,6 @@ func zoneParentIndexFunc(obj interface{}) ([]string, error) {
 	if !ok {
 		return nil, errObj
 	}
-	log.Infof("found zone parent %s/%s -> %s\n", e.Name, e.Namespace, e.ParentRef)
 	return []string{e.Namespace + "/" + e.ParentRef}, nil
 }
 
@@ -286,11 +337,16 @@ func (cntr *controller) Stop() error {
 
 // Run starts the controller.
 func (cntr *controller) Run() {
+	cntr.workers.Add(WORKER_NO)
+	for i := 0; i < WORKER_NO; i++ {
+		go cntr.workerFunc(i)
+	}
 	go cntr.entryController.Run(cntr.stopCh)
 	if cntr.zoneRef != nil {
 		go cntr.zoneController.Run(cntr.stopCh)
 	}
 	<-cntr.stopCh
+	cntr.workers.Wait()
 }
 
 // HasSynced calls on all controllers.
@@ -311,26 +367,28 @@ func (cntr *controller) EntryList() (entries []*objects.Entry) {
 	return entries
 }
 
+func (cntr *controller) EntryZoneIndex(n cache.ObjectName) (entries []*objects.Entry) {
+	idx := n.String()
+	return utils.ConvertSlice[*objects.Entry](cntr.entryLister.ByIndex(EntryZoneIndex, idx))
+}
+
 func (cntr *controller) EntryDNSIndex(idx string) (entries []*objects.Entry) {
-	os, err := cntr.entryLister.ByIndex(DNSIndex, idx)
+	os, err := cntr.entryLister.ByIndex(EntryDomainIndex, idx)
 	if err == nil && len(os) == 0 {
 		fields := dns.Split(idx)
 		if len(fields) > 1 {
 			idx = "*." + idx[fields[1]:]
-			os, err = cntr.entryLister.ByIndex(DNSIndex, idx)
+			os, err = cntr.entryLister.ByIndex(EntryDomainIndex, idx)
 		}
 	}
 	return utils.ConvertSlice[*objects.Entry](os, err)
 }
 
 func (cntr *controller) EntryIPIndex(idx string) (entries []*objects.Entry) {
-	return utils.ConvertSlice[*objects.Entry](cntr.entryLister.ByIndex(IPIndex, idx))
+	return utils.ConvertSlice[*objects.Entry](cntr.entryLister.ByIndex(EntryIPIndex, idx))
 }
 
-func (cntr *controller) GetZone(name *cache.ObjectName) *objects.Zone {
-	if name == nil {
-		return nil
-	}
+func (cntr *controller) GetZone(name cache.ObjectName) *objects.Zone {
 	e, _, _ := cntr.zoneLister.GetByKey(name.String())
 	if e != nil {
 		return e.(*objects.Zone)
@@ -339,11 +397,11 @@ func (cntr *controller) GetZone(name *cache.ObjectName) *objects.Zone {
 }
 
 func (cntr *controller) ZoneDomainIndex(idx string) (entries []*objects.Zone) {
-	return utils.ConvertSlice[*objects.Zone](cntr.zoneLister.ByIndex(ZoneIndex, idx))
+	return utils.ConvertSlice[*objects.Zone](cntr.zoneLister.ByIndex(ZoneDomainIndex, idx))
 }
 
-func (cntr *controller) ZoneParentIndex(idx string) (entries []*objects.Zone) {
-	return utils.ConvertSlice[*objects.Zone](cntr.zoneLister.ByIndex(ZoneParentIndex, idx))
+func (cntr *controller) ZoneParentIndex(n cache.ObjectName) (entries []*objects.Zone) {
+	return utils.ConvertSlice[*objects.Zone](cntr.zoneLister.ByIndex(ZoneParentIndex, n.String()))
 
 }
 
@@ -362,8 +420,14 @@ func (cntr *controller) GetNamespaceByName(name string) (*corev1.Namespace, erro
 	return nil, fmt.Errorf("namespace not found")
 }
 
-func (cntr *controller) Add(obj interface{})               { cntr.updateModifed() }
-func (cntr *controller) Delete(obj interface{})            { cntr.updateModifed() }
+func (cntr *controller) Add(obj interface{}) {
+	cntr.updateModifed()
+	cntr.queue.Add(NewRequestKeyForObject(obj.(objects.Object)))
+}
+func (cntr *controller) Delete(obj interface{}) {
+	cntr.updateModifed()
+	cntr.queue.Add(NewRequestKeyForObject(obj.(objects.Object)))
+}
 func (cntr *controller) Update(oldObj, newObj interface{}) { cntr.detectChanges(oldObj, newObj) }
 
 // detectChanges detects changes in objects, and updates the modified timestamp
@@ -380,13 +444,50 @@ func (cntr *controller) detectChanges(oldObj, newObj interface{}) {
 	case *objects.Entry:
 		if !(oldObj.(*objects.Entry).Equal(newObj.(*objects.Entry))) {
 			cntr.updateModifed()
+			cntr.queue.Add(NewRequestKeyForObject(ob))
 		}
 	case *objects.Zone:
 		if !(oldObj.(*objects.Zone).Equal(newObj.(*objects.Zone))) {
 			cntr.updateModifed()
+			cntr.queue.Add(NewRequestKeyForObject(ob))
 		}
 	default:
-		log.Warningf("Updates for %T not supported.", ob)
+		Log.Warningf("Updates for %T not supported.", ob)
+	}
+}
+
+func (cntr *controller) workerFunc(no int) {
+	defer cntr.workers.Done()
+
+	for {
+		req, shutdown := cntr.queue.Get()
+		if shutdown {
+			Log.Infof("stopping worker %d", no)
+			return
+		}
+		Log.Infof("reconcile %s on worker %d", req, no)
+
+		var err error
+		func() {
+			defer cntr.queue.Done(req)
+			defer func() {
+				if r := recover(); r != nil {
+					Log.Errorf("Recovered from panic %v\n%s:", r, debug.Stack())
+				}
+			}()
+			switch req.Kind {
+			case objects.TYPE_ZONE:
+				err = cntr.reconcileZone(cache.NewObjectName(req.Namespace, req.Name), no)
+			case objects.TYPE_ENTRY:
+				err = cntr.reconcileEntry(cache.NewObjectName(req.Namespace, req.Name), no)
+			}
+			if err != nil {
+				Log.Errorf("reconcile %s on worker %d failed: %s", req, no, err.Error())
+				cntr.queue.AddRateLimited(req)
+			} else {
+				cntr.queue.Forget(req)
+			}
+		}()
 	}
 }
 

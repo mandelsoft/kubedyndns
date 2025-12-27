@@ -110,7 +110,7 @@ var (
 )
 
 func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
-	log.Infof("retrieving Kubernetes client config")
+	Log.Infof("retrieving Kubernetes client config")
 	if k != nil {
 		if k.ClientConfig != nil && k.APIToken != "" {
 			return nil, fmt.Errorf("only API token or kubeconfig")
@@ -121,7 +121,7 @@ func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
 	}
 
 	if k != nil && k.ClientConfig != nil {
-		log.Infof("using explicit config")
+		Log.Infof("using explicit config")
 		return k.ClientConfig.ClientConfig()
 	}
 	loadingRules := &clientcmd.ClientConfigLoadingRules{}
@@ -131,7 +131,7 @@ func (k *K8SConfig) getClientConfig() (*rest.Config, error) {
 
 	// Connect to API from in cluster
 	if k == nil || len(k.APIServerList) == 0 {
-		log.Infof("using in-cluster config")
+		Log.Infof("using in-cluster config")
 		cc, err := rest.InClusterConfig()
 		if err != nil {
 			return nil, err
@@ -199,7 +199,7 @@ func (k *KubeDynDNS) InitKubeCache(ctx context.Context) (err error) {
 		k.k8s.selector = selector
 	}
 
-	log.Infof("using mode %s: %v", k.Mode, k.ServedZones)
+	Log.Infof("using mode %s: %v", k.Mode, k.ServedZones)
 	k.APIConn = newController(ctx, kubeClient, apiClient, k.controlOpts)
 
 	return err

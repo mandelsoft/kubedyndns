@@ -48,12 +48,12 @@ import (
 
 const pluginName = "kubedyndns"
 
-var log = clog.NewWithPlugin(pluginName)
+var Log = clog.NewWithPlugin(pluginName)
 
-func init() { objects.Log = log; plugin.Register(pluginName, setup) }
+func init() { objects.Log = Log; plugin.Register(pluginName, setup) }
 
 func setup(c *caddy.Controller) error {
-	log.Infof("setup kubedyndns plugin")
+	Log.Infof("setup kubedyndns plugin")
 	klog.SetOutput(os.Stdout)
 
 	ks, err := parse(c)

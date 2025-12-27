@@ -8,6 +8,7 @@ require (
 	github.com/miekg/dns v1.1.68
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.38.2
+	github.com/pkg/errors v0.9.1
 	golang.org/x/lint v0.0.0-20241112194109-818c5a804067
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
@@ -136,7 +137,6 @@ require (
 	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
 	github.com/outcaste-io/ristretto v0.2.3 // indirect
 	github.com/philhofer/fwd v1.1.3-0.20240916144458-20a13a1f6b7c // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect

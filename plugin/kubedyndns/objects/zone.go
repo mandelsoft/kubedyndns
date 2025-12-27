@@ -42,17 +42,21 @@ type Zone struct {
 	Version   string
 	Name      string
 	Namespace string
-	Valid     bool
+	Error     error
 
-	api.HostedZoneSpec
+	*api.HostedZoneSpec
 
-	NameServers []string
+	Status *api.HostedZoneStatus
 
 	*object.Empty
 }
 
+func (z *Zone) GetType() string {
+	return TYPE_ZONE
+}
+
 // ToZone returns a client specific converter for converting an api.HostedZone to a *Zone.
-func ToZone(ctx context.Context, client clientapi.Interface) func(obj meta.Object) (meta.Object, error) {
+func ToZone(ctx context.Context, client clientapi.Interface, update bool) func(obj meta.Object) (meta.Object, error) {
 	return func(obj meta.Object) (meta.Object, error) {
 		e, ok := obj.(*api.HostedZone)
 		if !ok {
@@ -62,12 +66,12 @@ func ToZone(ctx context.Context, client clientapi.Interface) func(obj meta.Objec
 			Version:        e.GetResourceVersion(),
 			Name:           e.GetName(),
 			Namespace:      e.GetNamespace(),
-			HostedZoneSpec: e.Spec,
+			HostedZoneSpec: e.Spec.DeepCopy(),
+			Status:         e.Status.DeepCopy(),
 		}
 
 		for _, n := range e.Status.NameServers {
 			fmt.Printf("cache zone %q\n", plugin.Name(n).Normalize())
-			s.NameServers = append(s.NameServers, plugin.Name(n).Normalize())
 		}
 
 		s.DomainNames = nil
@@ -85,33 +89,9 @@ func ToZone(ctx context.Context, client clientapi.Interface) func(obj meta.Objec
 				s.EMail = dns.Fqdn(strings.Replace(comps[0], ".", "\\.", -1) + "." + comps[1])
 			}
 		}
-
-		mod := false
-		if err != nil {
-			s.Valid = false
-			mod = meta2.SetStatusCondition(&e.Status.Conditions, meta.Condition{
-				Type:               api.ServerConditionType,
-				Status:             meta.ConditionFalse,
-				ObservedGeneration: e.ObjectMeta.Generation,
-				Reason:             api.ReasonServerValidationFailure,
-				Message:            err.Error(),
-			})
-		} else {
-			s.Valid = true
-			mod = meta2.SetStatusCondition(&e.Status.Conditions, meta.Condition{
-				Type:               api.ServerConditionType,
-				Status:             meta.ConditionTrue,
-				ObservedGeneration: e.ObjectMeta.Generation,
-				Reason:             api.ReasonServerActive,
-				Message:            "hosted zone served",
-			})
-		}
-		if mod {
-			_, err = client.CorednsV1alpha1().HostedZones(e.Namespace).UpdateStatus(ctx, e, meta.UpdateOptions{})
-		}
-
-		if err != nil {
-			Log.Errorf("error updating zone status %s/%s: %s", e.Namespace, e.Name, err)
+		s.Error = err
+		if update {
+			s.UpdateStatus(ctx, client)
 		}
 		*e = api.HostedZone{}
 
@@ -119,58 +99,139 @@ func ToZone(ctx context.Context, client clientapi.Interface) func(obj meta.Objec
 	}
 }
 
+func (z *Zone) IsPlain() bool {
+	// check for plain mode.
+	// This means the controller is explictly managed and not by an aaS controller
+	// managing additional conditions
+	plain := true
+	for _, c := range z.Status.Conditions {
+		if c.Type != api.ServerConditionType {
+			plain = false
+			break
+		}
+	}
+	return plain
+}
+
+func (z *Zone) UpdateStatus(ctx context.Context, client clientapi.Interface) (bool, error) {
+	var o api.HostedZone
+
+	plain := z.IsPlain()
+	mod := false
+	if plain {
+		if len(o.Status.Conditions) > 0 {
+			o.Status.Conditions = nil
+			mod = true
+		}
+	}
+
+	// In plain mode the status is managed directly. otherwise
+	// a server condition is managed, which is the handled by the aaS controller
+	// to determine an aggregated object state.
+	o.ResourceVersion = z.GetResourceVersion()
+	o.Name = z.GetName()
+	o.Namespace = z.GetNamespace()
+	z.Status.DeepCopyInto(&o.Status)
+	if z.Error != nil {
+		if plain {
+			if o.Status.Message != z.Error.Error() || o.Status.State != "Invalid" {
+				o.Status.Message = z.Error.Error()
+				o.Status.State = "Invalid"
+				mod = true
+			}
+		} else {
+			mod = meta2.SetStatusCondition(&o.Status.Conditions, meta.Condition{
+				Type:               api.ServerConditionType,
+				Status:             meta.ConditionFalse,
+				ObservedGeneration: o.ObjectMeta.Generation,
+				Reason:             api.ReasonServerValidationFailure,
+				Message:            z.Error.Error(),
+			})
+		}
+	} else {
+		if plain {
+			if o.Status.Message != "zone is served" || o.Status.State != "Ok" {
+				o.Status.Message = "zone is served"
+				o.Status.State = "Ok"
+				mod = true
+			}
+		} else {
+			mod = meta2.SetStatusCondition(&o.Status.Conditions, meta.Condition{
+				Type:               api.ServerConditionType,
+				Status:             meta.ConditionTrue,
+				ObservedGeneration: o.ObjectMeta.Generation,
+				Reason:             api.ReasonServerActive,
+				Message:            "hosted zone served",
+			})
+		}
+	}
+	if mod {
+		_, err := client.CorednsV1alpha1().HostedZones(o.Namespace).UpdateStatus(ctx, &o, meta.UpdateOptions{})
+		if err != nil {
+			Log.Errorf("error updating zone status %s/%s: %s", o.Namespace, o.Name, err)
+		} else {
+			Log.Infof("zone status %s/%s updated: %#v", o.Namespace, o.Name, o.Status)
+		}
+		return mod, err
+	}
+	return mod, nil
+}
+
 var _ runtime.Object = &Zone{}
 
 // DeepCopyObject implements the ObjectKind interface.
-func (s *Zone) DeepCopyObject() runtime.Object {
+func (z *Zone) DeepCopyObject() runtime.Object {
 	s1 := &Zone{
-		Version:   s.Version,
-		Name:      s.Name,
-		Namespace: s.Namespace,
+		Version:   z.Version,
+		Name:      z.Name,
+		Namespace: z.Namespace,
 	}
-	set(&s1.NameServers, s.NameServers)
-	s1.HostedZoneSpec = s.HostedZoneSpec
+	s1.Status = z.Status.DeepCopy()
+	s1.HostedZoneSpec = z.HostedZoneSpec.DeepCopy()
 	return s1
 }
 
 // Equal checks if the update to an entry is something
 // that matters to us or if they are effectively equivalent.
-func (e *Zone) Equal(b *Zone) bool {
-	if e == nil || b == nil {
+func (z *Zone) Equal(b *Zone) bool {
+	if z == nil || b == nil {
 		return false
 	}
 
-	if len(e.NameServers) != len(b.NameServers) {
+	if len(z.Status.NameServers) != len(b.Status.NameServers) {
 		return false
 	}
 
 	// we should be able to rely on
 	// these being sorted and able to be compared
 	// they are supposed to be in a canonical format
-	if !sets.NewString(e.NameServers...).Equal(sets.NewString(b.NameServers...)) {
+	if !sets.NewString(z.Status.NameServers...).Equal(sets.NewString(b.Status.NameServers...)) {
 		return false
 	}
 
-	if !e.HostedZoneSpec.Equal(&b.HostedZoneSpec) {
+	if !z.HostedZoneSpec.Equal(b.HostedZoneSpec) {
+		return false
+	}
+	if z.Status.State != b.Status.State {
 		return false
 	}
 	return true
 }
 
 // GetNamespace implements the metav1.Object interface.
-func (s *Zone) GetNamespace() string { return s.Namespace }
+func (z *Zone) GetNamespace() string { return z.Namespace }
 
 // SetNamespace implements the metav1.Object interface.
-func (s *Zone) SetNamespace(namespace string) {}
+func (z *Zone) SetNamespace(namespace string) {}
 
 // GetName implements the metav1.Object interface.
-func (s *Zone) GetName() string { return s.Name }
+func (z *Zone) GetName() string { return z.Name }
 
 // SetName implements the metav1.Object interface.
-func (s *Zone) SetName(name string) {}
+func (z *Zone) SetName(name string) {}
 
 // GetResourceVersion implements the metav1.Object interface.
-func (s *Zone) GetResourceVersion() string { return s.Version }
+func (z *Zone) GetResourceVersion() string { return z.Version }
 
 // SetResourceVersion implements the metav1.Object interface.
-func (s *Zone) SetResourceVersion(version string) {}
+func (z *Zone) SetResourceVersion(version string) { z.Version = version }

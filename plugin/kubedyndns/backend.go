@@ -167,7 +167,7 @@ func (k *Backend) findEntries(r *recordRequest, t uint16) (services []msg.Servic
 	zi := k.zoneInfo
 	if k.filtered {
 		entries = k.APIConn.EntryDNSIndex(r.domain + "." + zi.DomainName)
-		log.Infof("find (filtered) %s.%s -> %d entries", r.domain, zi.DomainName, len(entries))
+		Log.Infof("find (filtered) %s.%s -> %d entries", r.domain, zi.DomainName, len(entries))
 	} else {
 		tmp := k.APIConn.EntryDNSIndex(r.domain + ".")
 		for _, e := range tmp {
@@ -175,7 +175,7 @@ func (k *Backend) findEntries(r *recordRequest, t uint16) (services []msg.Servic
 				entries = append(entries, e)
 			}
 		}
-		log.Infof("find %s. -> %d entries -> %d in %s<%s>", r.domain, len(tmp), len(entries), k.zoneObject, zi.DomainName)
+		Log.Infof("find %s. -> %d entries -> %d in %s<%s>", r.domain, len(tmp), len(entries), k.zoneObject, zi.DomainName)
 	}
 	if len(entries) == 0 {
 		return nil, errNoItems

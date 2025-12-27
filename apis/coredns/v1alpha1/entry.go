@@ -111,4 +111,15 @@ type CoreDNSStatus struct {
 	// Error message in case of an invalid entry
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// RootZone is the zone of the primary dns server
+	// feeling responsible
+	// +optional
+	RootZone string `json:"rootZone,omitempty"`
+
+	// EffectiveDomainNames are set in primary mode
+	// to report the effective doamin names aggregated
+	// along the hosted zones up to the served root zone
+	// +optional
+	EffectiveDomainNames []string `json:"effectiveDomainNames,omitempty"`
 }
