@@ -60,14 +60,14 @@ func (cntr *controller) reconcileEntry(key cache.ObjectName, no int) error {
 		if err != nil {
 			return err
 		}
-		if root == "" {
+		if root == nil {
 			return e.UpdateStatus(cntr.ctx, cntr.client, "", nil, fmt.Errorf("no root zone found"))
 		}
 
 		if !ok {
 			// remove old zone responsibility
 			if e.Status.RootZone != "" && e.Status.RootZone == cntr.zoneRef.Name {
-				if root == "" {
+				if root == nil {
 					err = fmt.Errorf("no root zone found")
 				} else {
 					err = fmt.Errorf("responsibility lost")
@@ -83,9 +83,12 @@ func (cntr *controller) reconcileEntry(key cache.ObjectName, no int) error {
 			Log.Infof("zone %q state is %q", z.Name, z.Status.State)
 			return e.UpdateStatus(cntr.ctx, cntr.client, zone, names, fmt.Errorf("zone failure: %s", z.Status.Message))
 		}
-		zone = root
+		zone = root.Name
 	} else {
 		if cntr.zoneRef != nil {
+			return nil
+		}
+		if len(cntr.controlOpts.namespaces) > 0 && !cntr.controlOpts.namespaces.Has(key.Namespace) {
 			return nil
 		}
 	}

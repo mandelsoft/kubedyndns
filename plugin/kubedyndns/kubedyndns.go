@@ -34,6 +34,7 @@ import (
 	"github.com/miekg/dns"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -54,7 +55,7 @@ type K8SConfig struct {
 	APIClientCert string
 	APIClientKey  string
 	ClientConfig  clientcmd.ClientConfig
-	Namespaces    map[string]struct{}
+	Namespaces    sets.Set[string]
 	// Label handling.
 	labelSelector *meta.LabelSelector
 	selector      labels.Selector
@@ -83,14 +84,14 @@ func New(zones []string) *KubeDynDNS {
 	k.Zones = zones
 	k.ttl = defaultTTL
 	k.Mode = MODE_FILTER
-	k.namespaces = make(map[string]struct{})
+	k.namespaces = sets.New[string]()
 	return k
 }
 
 func (k *KubeDynDNS) assureK8SConfig() *K8SConfig {
 	if k.k8s == nil {
 		k.k8s = &K8SConfig{
-			Namespaces: make(map[string]struct{}),
+			Namespaces: sets.New[string](),
 		}
 	}
 	return k.k8s

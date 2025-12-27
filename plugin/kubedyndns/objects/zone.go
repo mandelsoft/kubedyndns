@@ -39,6 +39,7 @@ import (
 
 // Zone is a stripped down api.HostedZone with only the items we need for CoreDNS.
 type Zone struct {
+	Plain     bool
 	Version   string
 	Name      string
 	Namespace string
@@ -63,6 +64,7 @@ func ToZone(ctx context.Context, client clientapi.Interface, update bool) func(o
 			return nil, fmt.Errorf("unexpected object %v", obj)
 		}
 		s := &Zone{
+			Plain:          IsPlain(e.Status.Conditions),
 			Version:        e.GetResourceVersion(),
 			Name:           e.GetName(),
 			Namespace:      e.GetNamespace(),
@@ -99,12 +101,12 @@ func ToZone(ctx context.Context, client clientapi.Interface, update bool) func(o
 	}
 }
 
-func (z *Zone) IsPlain() bool {
+func IsPlain(conditions []meta.Condition) bool {
 	// check for plain mode.
 	// This means the controller is explictly managed and not by an aaS controller
 	// managing additional conditions
 	plain := true
-	for _, c := range z.Status.Conditions {
+	for _, c := range conditions {
 		if c.Type != api.ServerConditionType {
 			plain = false
 			break
@@ -116,9 +118,12 @@ func (z *Zone) IsPlain() bool {
 func (z *Zone) UpdateStatus(ctx context.Context, client clientapi.Interface) (bool, error) {
 	var o api.HostedZone
 
-	plain := z.IsPlain()
+	if z.Plain {
+		Log.Infof("using plain mode for %d conditions", len(z.Status.Conditions))
+	}
+
 	mod := false
-	if plain {
+	if z.Plain {
 		if len(o.Status.Conditions) > 0 {
 			o.Status.Conditions = nil
 			mod = true
@@ -133,7 +138,7 @@ func (z *Zone) UpdateStatus(ctx context.Context, client clientapi.Interface) (bo
 	o.Namespace = z.GetNamespace()
 	z.Status.DeepCopyInto(&o.Status)
 	if z.Error != nil {
-		if plain {
+		if z.Plain {
 			if o.Status.Message != z.Error.Error() || o.Status.State != "Invalid" {
 				o.Status.Message = z.Error.Error()
 				o.Status.State = "Invalid"
@@ -149,7 +154,7 @@ func (z *Zone) UpdateStatus(ctx context.Context, client clientapi.Interface) (bo
 			})
 		}
 	} else {
-		if plain {
+		if z.Plain {
 			if o.Status.Message != "zone is served" || o.Status.State != "Ok" {
 				o.Status.Message = "zone is served"
 				o.Status.State = "Ok"

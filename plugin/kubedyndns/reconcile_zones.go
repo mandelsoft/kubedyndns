@@ -47,7 +47,7 @@ func (cntr *controller) reconcileZone(key cache.ObjectName, no int) error {
 	z := o.(*objects.Zone)
 
 	ok, root, err := cntr.responsibleForZoneObject(z, nil)
-	if err == nil && root == "" {
+	if err == nil && root == nil {
 		if z.Error == nil {
 			z.Error = fmt.Errorf("no root zone found")
 		}
@@ -60,7 +60,7 @@ func (cntr *controller) reconcileZone(key cache.ObjectName, no int) error {
 		}
 	}
 
-	if !ok && root != "" {
+	if !ok && root != nil {
 		Log.Infof("not responsible for root zone %q for %s", root, key)
 	}
 
@@ -70,6 +70,7 @@ func (cntr *controller) reconcileZone(key cache.ObjectName, no int) error {
 
 	Log.Infof("responsible for %s", key)
 
+	z.Plain = root.Plain
 	_, err = z.UpdateStatus(cntr.ctx, cntr.client)
 	if err != nil {
 		return err
@@ -100,24 +101,24 @@ func (cntr *controller) triggerNestedZones(key cache.ObjectName) {
 	}
 }
 
-func (cntr *controller) responsibleForZoneObject(z *objects.Zone, names *[]string) (bool, string, error) {
+func (cntr *controller) responsibleForZoneObject(z *objects.Zone, names *[]string) (bool, *objects.Zone, error) {
 	if cntr.zoneRef == nil || z.Namespace != cntr.zoneRef.Namespace {
-		return false, "", nil
+		return false, nil, nil
 	}
 	for {
 		aggregateNames(z, names)
 		if z.Name == cntr.zoneRef.Name {
-			return true, cntr.zoneRef.Name, nil
+			return true, z, nil
 		}
 
 		if z.ParentRef == "" {
-			return false, z.Name, nil
+			return false, z, nil
 		}
 
 		n := cache.NewObjectName(z.Namespace, z.ParentRef)
 		o, ok, err := cntr.zoneLister.GetByKey(n.String())
 		if err != nil || !ok {
-			return false, "", err
+			return false, nil, err
 		}
 		z = o.(*objects.Zone)
 	}

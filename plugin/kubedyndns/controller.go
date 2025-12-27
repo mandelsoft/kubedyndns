@@ -31,6 +31,7 @@ import (
 	"github.com/coredns/coredns/plugin/kubernetes/object"
 	"github.com/mandelsoft/kubedyndns/plugin/kubedyndns/utils"
 	"github.com/miekg/dns"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/workqueue"
 
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
@@ -109,7 +110,7 @@ type controller struct {
 type controlOpts struct {
 	zoneObject string
 	filtered   bool
-	namespaces map[string]struct{}
+	namespaces sets.Set[string]
 
 	zoneRef *cache.ObjectName
 }
@@ -181,7 +182,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 	}
 
 	cntr.entryLister, cntr.entryController = object.NewIndexerInformer(
-		filterListWatch(cntr.client, entryListFunc, entryWatchFunc, cntr.selector, keys(opts.namespaces)...),
+		filterListWatch(cntr.client, entryListFunc, entryWatchFunc, cntr.selector, opts.namespaces.UnsortedList()...),
 		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{EntryDomainIndex: entryDNSIndexFunc, EntryIPIndex: entryIPIndexFunc, EntryZoneIndex: entryZoneIndexFunc},
@@ -191,7 +192,7 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 	if cntr.zoneRef != nil {
 		Log.Info("handling zone %s", cntr.zoneRef.String())
 		cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
-			filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, keys(opts.namespaces)...),
+			filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, opts.namespaces.UnsortedList()...),
 			&api.HostedZone{},
 			cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 			cache.Indexers{ZoneDomainIndex: zoneIndexFunc, ZoneParentIndex: zoneParentIndexFunc},
@@ -200,14 +201,6 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 	}
 
 	return &cntr
-}
-
-func keys(namespaces map[string]struct{}) []string {
-	var result []string
-	for k := range namespaces {
-		result = append(result, k)
-	}
-	return result
 }
 
 ////////////////////////////////////////////////////////////////////////////////
