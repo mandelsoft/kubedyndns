@@ -55,6 +55,7 @@ func (k *KubeDynDNS) ServeDNS(ctx context.Context, w dns.ResponseWriter, in *dns
 	if zone == "" {
 		return plugin.NextOrFailure(k.Name(), k.Next, ctx, w, in)
 	}
+	Log.Infof("serve %q", qname)
 
 	var zo *objects.Zone
 	if k.zoneRef != nil {

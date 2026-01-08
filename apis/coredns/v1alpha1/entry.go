@@ -105,6 +105,11 @@ type SRVRecord struct {
 
 // CoreDNSStatus describes the status of an entry
 type CoreDNSStatus struct {
+	// The status of each condition is one of True, False, or Unknown.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// State of the dns entry object
 	// +optional
 	State string `json:"state,omitempty"`

@@ -56,15 +56,22 @@ func (z *Zone) GetType() string {
 	return TYPE_ZONE
 }
 
+func (z *Zone) String() string {
+	if z == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%s/%s[%v]", z.Namespace, z.Name, z.DomainNames)
+}
+
 // ToZone returns a client specific converter for converting an api.HostedZone to a *Zone.
-func ToZone(ctx context.Context, client clientapi.Interface, update bool) func(obj meta.Object) (meta.Object, error) {
+func ToZone(ctx context.Context, client clientapi.Interface, transitive bool, slave bool) func(obj meta.Object) (meta.Object, error) {
 	return func(obj meta.Object) (meta.Object, error) {
 		e, ok := obj.(*api.HostedZone)
 		if !ok {
 			return nil, fmt.Errorf("unexpected object %v", obj)
 		}
 		s := &Zone{
-			Plain:          IsPlain(e.Status.Conditions),
+			Plain:          !slave && IsPlain(e.Status.Conditions),
 			Version:        e.GetResourceVersion(),
 			Name:           e.GetName(),
 			Namespace:      e.GetNamespace(),
@@ -91,10 +98,12 @@ func ToZone(ctx context.Context, client clientapi.Interface, update bool) func(o
 				s.EMail = dns.Fqdn(strings.Replace(comps[0], ".", "\\.", -1) + "." + comps[1])
 			}
 		}
-		s.Error = err
-		if update {
-			s.UpdateStatus(ctx, client)
+		if !transitive {
+			if e.Spec.ParentRef != "" {
+				err = fmt.Errorf("nested zones not supported in non-transitive mode")
+			}
 		}
+		s.Error = err
 		*e = api.HostedZone{}
 
 		return s, nil

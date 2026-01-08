@@ -47,7 +47,7 @@ func (cntr *controller) reconcileZone(key cache.ObjectName, no int) error {
 	z := o.(*objects.Zone)
 
 	ok, root, err := cntr.responsibleForZoneObject(z, nil)
-	if err == nil && root == nil {
+	if err == nil && root == nil && !cntr.slave {
 		if z.Error == nil {
 			z.Error = fmt.Errorf("no root zone found")
 		}

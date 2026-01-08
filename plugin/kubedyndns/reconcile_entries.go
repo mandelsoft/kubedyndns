@@ -33,6 +33,8 @@ func (cntr *controller) reconcileEntry(key cache.ObjectName, no int) error {
 			Log.Infof("entry %q has been deleted", key)
 		}
 		return err
+	} else {
+		Log.Infof("reconcile entry %q", key)
 	}
 	e := o.(*objects.Entry)
 
@@ -56,11 +58,14 @@ func (cntr *controller) reconcileEntry(key cache.ObjectName, no int) error {
 
 		names = slices.Clone(e.DNSNames)
 		ok, root, err := cntr.responsibleForZoneObject(z, &names)
-		Log.Infof("responsible: %v, root: %q, error: %v", ok, root, err)
+		Log.Infof("responsible: %t, root: %q, error: %v", ok, root, err)
 		if err != nil {
 			return err
 		}
 		if root == nil {
+			if cntr.slave {
+				return nil
+			}
 			return e.UpdateStatus(cntr.ctx, cntr.client, "", nil, fmt.Errorf("no root zone found"))
 		}
 

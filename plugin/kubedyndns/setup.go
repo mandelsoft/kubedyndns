@@ -163,12 +163,20 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 	if len(zones) != 0 {
 		k8s.Zones = zones
 		for i := 0; i < len(k8s.Zones); i++ {
-			k8s.Zones[i] = plugin.Host(k8s.Zones[i]).Normalize()
+			hosts := plugin.Host(k8s.Zones[i]).NormalizeExact()
+			if hosts == nil {
+				return nil, fmt.Errorf("no hosts found in zone %s", k8s.Zones[i])
+			}
+			k8s.Zones[i] = hosts[0]
 		}
 	} else {
 		k8s.Zones = make([]string, len(c.ServerBlockKeys))
 		for i := 0; i < len(c.ServerBlockKeys); i++ {
-			k8s.Zones[i] = plugin.Host(c.ServerBlockKeys[i]).Normalize()
+			hosts := plugin.Host(c.ServerBlockKeys[i]).NormalizeExact()
+			if hosts == nil {
+				return nil, fmt.Errorf("no hosts found in zone %s", k8s.Zones[i])
+			}
+			k8s.Zones[i] = hosts[0]
 		}
 	}
 
@@ -309,6 +317,19 @@ func ParseStanza(c *caddy.Controller, kc *K8SConfig) (*KubeDynDNS, error) {
 				k8s.transitive = true
 			case 1:
 				k8s.transitive, err = strconv.ParseBool(args[0])
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, c.ArgErr()
+			}
+		case "slave":
+			args := c.RemainingArgs()
+			switch len(args) {
+			case 0:
+				k8s.slave = true
+			case 1:
+				k8s.slave, err = strconv.ParseBool(args[0])
 				if err != nil {
 					return nil, err
 				}

@@ -109,6 +109,8 @@ type controller struct {
 
 type controlOpts struct {
 	zoneObject string
+	transitive bool
+	slave      bool
 	filtered   bool
 	namespaces sets.Set[string]
 
@@ -186,17 +188,17 @@ func newController(ctx context.Context, kubeClient kubernetes.Interface, client 
 		&api.CoreDNSEntry{},
 		cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 		cache.Indexers{EntryDomainIndex: entryDNSIndexFunc, EntryIPIndex: entryIPIndexFunc, EntryZoneIndex: entryZoneIndexFunc},
-		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client), nil),
+		object.DefaultProcessor(objects.ToEntry(ctx, cntr.client, opts.slave), nil),
 	)
 
 	if cntr.zoneRef != nil {
-		Log.Info("handling zone %s", cntr.zoneRef.String())
+		Log.Infof("handling zone %s", cntr.zoneRef.String())
 		cntr.zoneLister, cntr.zoneController = object.NewIndexerInformer(
 			filterListWatch(cntr.client, zoneListFunc, zoneWatchFunc, cntr.selector, opts.namespaces.UnsortedList()...),
 			&api.HostedZone{},
 			cache.ResourceEventHandlerFuncs{AddFunc: cntr.Add, UpdateFunc: cntr.Update, DeleteFunc: cntr.Delete},
 			cache.Indexers{ZoneDomainIndex: zoneIndexFunc, ZoneParentIndex: zoneParentIndexFunc},
-			object.DefaultProcessor(objects.ToZone(ctx, cntr.client, cntr.zoneRef == nil), nil),
+			object.DefaultProcessor(objects.ToZone(ctx, cntr.client, opts.transitive, opts.slave), nil),
 		)
 	}
 

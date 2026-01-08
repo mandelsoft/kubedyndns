@@ -95,15 +95,19 @@ spec:
                   Formally, for every name a new DNS zone is managed.
                 items:
                   type: string
+                minItems: 1
                 type: array
               email:
                 description: EMail address of admins.
+                minLength: 1
                 type: string
               expire:
                 description: Expire is the maximal validity interval.
+                minimum: 1
                 type: integer
               minimumTTL:
                 description: MinmumTTL is the minimal live time.
+                minimum: 10
                 type: integer
               parentRef:
                 description: ParantRef is the name if a local hosted zone resource
@@ -111,9 +115,11 @@ spec:
                 type: string
               refresh:
                 description: Refresh is the interval for secondaries to query to updates
+                minimum: 1
                 type: integer
               retry:
                 description: Retry time to repeat refresh.
+                minimum: 1
                 type: integer
               runtime:
                 description: |-
@@ -129,6 +135,11 @@ spec:
             - refresh
             - retry
             type: object
+            x-kubernetes-validations:
+            - message: Cannot set both class and/or runtime and parentRef
+              rule: '!((has(self.class) || has(self.runtime)) && has(self.parentRef))'
+            - message: class is immutable
+              rule: '!has(oldSelf.class) || self.class == oldSelf.class'
           status:
             description: status defines the observed state of HostedZone
             properties:

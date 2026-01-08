@@ -1,20 +1,18 @@
 /*
- * Copyright 2021 Mandelsoft. All rights reserved.
- *  This file is licensed under the Apache Software License, v. 2 except as noted
- *  otherwise in the LICENSE file
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *       http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- */
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package v1alpha1
 
@@ -28,6 +26,8 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // HostedZoneSpec defines the desired state of HostedZone
+// +kubebuilder:validation:XValidation:rule="!((has(self.class) || has(self.runtime)) && has(self.parentRef))",message="Cannot set both class and/or runtime and parentRef"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.class) || self.class == oldSelf.class",message="class is immutable"
 type HostedZoneSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
@@ -48,26 +48,32 @@ type HostedZoneSpec struct {
 
 	// DomainNames is a set of domain names for the hosted zone.
 	// Formally, for every name a new DNS zone is managed.
+	// +kubebuilder:validation:MinItems=1
 	DomainNames []string `json:"domainNames"`
 
 	// EMail address of admins.
+	// +kubebuilder:validation:MinLength=1
 	EMail string `json:"email"`
 
 	// Refresh is the interval for secondaries to query to updates
+	// +kubebuilder:validation:Minimum=1
 	Refresh int `json:"refresh"`
 
 	// Retry time to repeat refresh.
+	// +kubebuilder:validation:Minimum=1
 	Retry int `json:"retry"`
 
 	// Expire is the maximal validity interval.
+	// +kubebuilder:validation:Minimum=1
 	Expire int `json:"expire"`
 
 	// MinmumTTL is the minimal live time.
+	// +kubebuilder:validation:Minimum=10
 	MinimumTTL int `json:"minimumTTL"`
 
 	// ParantRef is the name if a local hosted zone resource it is linked to.
 	// +optional
-	ParentRef string `json:"parentRef"`
+	ParentRef string `json:"parentRef,omitempty"`
 }
 
 type Observed struct {
@@ -79,8 +85,8 @@ type Observed struct {
 }
 
 func (o *Observed) Equals(other *Observed) bool {
-	if o == nil || other == nil {
-		return other == o
+	if o == nil {
+		return other == nil
 	}
 	return reflect.DeepEqual(o, other)
 }
@@ -141,7 +147,6 @@ type HostedZoneStatus struct {
 // +kubebuilder:printcolumn:name=Message,JSONPath=".status.message",type=string,priority=1
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +kubebuilder:rbac:groups=coredns.mandelsoft.org,resources=hostedzones,verbs=get;list;watch;create;update;patch;delete,labels=rbac.authorization.k8s.io/aggregate-to-admin=true
 
 // HostedZone is the Schema for the hostedzones API
 type HostedZone struct {

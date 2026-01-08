@@ -32,7 +32,8 @@ import (
 	api "github.com/mandelsoft/kubedyndns/apis/coredns/v1alpha1"
 	clientapi "github.com/mandelsoft/kubedyndns/client/clientset/versioned"
 	"github.com/miekg/dns"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/coredns/coredns/plugin/kubernetes/object"
@@ -42,6 +43,7 @@ var Log clog.P
 
 // Entry is a stripped down api.CoreDNSEntry with only the items we need for CoreDNS.
 type Entry struct {
+	Plain     bool
 	Version   string
 	Name      string
 	Namespace string
@@ -85,13 +87,14 @@ func normalizeRecords(recs []api.SRVRecord, zone string) []api.SRVRecord {
 }
 
 // ToEntry returns a client specific converter for converting an api.CoreDNSEntry to a *Entry.
-func ToEntry(ctx context.Context, client clientapi.Interface) func(obj meta.Object) (meta.Object, error) {
-	return func(obj meta.Object) (meta.Object, error) {
+func ToEntry(ctx context.Context, client clientapi.Interface, slave bool) func(obj metav1.Object) (metav1.Object, error) {
+	return func(obj metav1.Object) (metav1.Object, error) {
 		e, ok := obj.(*api.CoreDNSEntry)
 		if !ok {
 			return nil, fmt.Errorf("unexpected object %v", obj)
 		}
 		s := &Entry{
+			Plain:     !slave && IsPlain(e.Status.Conditions),
 			Version:   e.GetResourceVersion(),
 			Name:      e.GetName(),
 			Namespace: e.GetNamespace(),
@@ -384,23 +387,49 @@ func (e *Entry) UpdateStatus(ctx context.Context, client clientapi.Interface, zn
 		o.Status.EffectiveDomainNames = names
 	}
 	if e.Error != nil {
+		Log.Infof("entry has error: %s", e.Error)
 		err = e.Error
+	} else {
+		if err != nil {
+			Log.Infof("entry zone problem: %s", err)
+		}
 	}
 	if err != nil {
-		if o.Status.Message != err.Error() || o.Status.State != "Invalid" {
-			o.Status.Message = err.Error()
-			o.Status.State = "Invalid"
-			mod = true
+		if e.Plain {
+			if o.Status.Message != err.Error() || o.Status.State != "Invalid" {
+				o.Status.Message = err.Error()
+				o.Status.State = "Invalid"
+				mod = true
+			}
+		} else {
+			mod = meta.SetStatusCondition(&o.Status.Conditions, metav1.Condition{
+				Type:               api.ServerConditionType,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: o.ObjectMeta.Generation,
+				Reason:             api.ReasonServerValidationFailure,
+				Message:            err.Error(),
+			})
 		}
 	} else {
-		if o.Status.Message != "" || o.Status.State != "Ok" {
-			mod = true
-			o.Status.Message = ""
-			o.Status.State = "Ok"
+		if e.Plain {
+			if o.Status.Message != "" || o.Status.State != "Ok" {
+				mod = true
+				o.Status.Message = ""
+				o.Status.State = "Ok"
+				Log.Infof("set entry to Ok")
+			}
+		} else {
+			mod = meta.SetStatusCondition(&o.Status.Conditions, metav1.Condition{
+				Type:               api.ServerConditionType,
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: o.ObjectMeta.Generation,
+				Reason:             api.ReasonServerActive,
+				Message:            "entry served",
+			})
 		}
 	}
 	if mod {
-		_, err := client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, &o, meta.UpdateOptions{})
+		_, err := client.CorednsV1alpha1().CoreDNSEntries(e.Namespace).UpdateStatus(ctx, &o, metav1.UpdateOptions{})
 		if err != nil {
 			Log.Errorf("error updating entry status %s/%s: %s", o.Namespace, o.Name, err)
 		} else {

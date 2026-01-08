@@ -66,7 +66,6 @@ type KubeDynDNS struct {
 	Next        plugin.Handler
 	Mode        string
 	Zones       []string
-	transitive  bool
 	ServedZones []string
 	Upstream    *upstream.Upstream
 	APIConn     Controller
